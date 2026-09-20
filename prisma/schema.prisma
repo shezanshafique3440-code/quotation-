@@ -1,0 +1,272 @@
+// QuoteFlow AI — multi-tenant schema.
+//
+// Portability: no DB-level enums and no Decimal columns, so the same schema
+// runs on SQLite (default, zero-config) and PostgreSQL. To move to Postgres,
+// change `provider` to "postgresql" and point DATABASE_URL at the server.
+// All money is stored as integer minor units (cents) to avoid float drift.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+  sessions    Session[]
+  quotations  Quotation[] @relation("QuotationAuthor")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Billing / plan state. `plan` is "free" | "pro" (see src/lib/plans.ts).
+  plan                 String    @default("free")
+  planStatus           String    @default("active")
+  planRenewsAt         DateTime?
+  stripeCustomerId     String?   @unique
+  stripeSubscriptionId String?   @unique
+
+  profile     BusinessProfile?
+  memberships Membership[]
+  sessions    Session[]
+  customers   Customer[]
+  inquiries   Inquiry[]
+  products    Product[]
+  quotations  Quotation[]
+  reminders   Reminder[]
+  usageEvents UsageEvent[]
+}
+
+model BusinessProfile {
+  id             String @id @default(cuid())
+  organizationId String @unique
+
+  legalName      String
+  currency       String  @default("USD")
+  locale         String  @default("en-US")
+  email          String?
+  phone          String?
+  whatsappNumber String?
+  website        String?
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  postalCode     String?
+  country        String?
+  taxId          String?
+  // Default tax rate in basis points (1250 = 12.50%).
+  taxRateBp      Int     @default(0)
+  logoUrl        String?
+  quoteNumberPrefix String @default("QT")
+  defaultValidityDays Int  @default(14)
+  defaultTerms   String?
+  defaultNotes   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Membership {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  // "owner" | "admin" | "member"
+  role           String   @default("owner")
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Session {
+  // Primary key is a SHA-256 hash of the cookie token; the raw token is never stored.
+  id             String   @id
+  userId         String
+  organizationId String
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Customer {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  company        String?
+  email          String?
+  phone          String?
+  whatsapp       String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inquiries    Inquiry[]
+  quotations   Quotation[]
+
+  @@index([organizationId, name])
+}
+
+model Inquiry {
+  id             String   @id @default(cuid())
+  organizationId String
+  customerId     String
+  // "whatsapp" | "email" | "phone" | "web" | "walk_in" | "other"
+  channel        String   @default("whatsapp")
+  subject        String
+  message        String
+  // "new" | "quoted" | "won" | "archived"
+  status         String   @default("new")
+  receivedAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotations   Quotation[]
+
+  @@index([organizationId, status])
+  @@index([customerId])
+}
+
+model Product {
+  id             String   @id @default(cuid())
+  organizationId String
+  sku            String?
+  name           String
+  description    String?
+  unitPriceCents Int
+  unit           String   @default("unit")
+  taxRateBp      Int      @default(0)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items        QuotationItem[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId, active])
+}
+
+model Quotation {
+  id             String  @id @default(cuid())
+  organizationId String
+  number         String
+  customerId     String
+  inquiryId      String?
+  createdById    String?
+
+  // "draft" | "sent" | "accepted" | "rejected" | "expired"
+  status   String @default("draft")
+  title    String
+  currency String @default("USD")
+
+  subtotalCents Int @default(0)
+  discountCents Int @default(0)
+  taxCents      Int @default(0)
+  totalCents    Int @default(0)
+
+  notes String?
+  terms String?
+
+  validUntil DateTime?
+  sentAt     DateTime?
+  decidedAt  DateTime?
+
+  // Provenance of the draft: null when hand-written, otherwise the model id used.
+  aiModel     String?
+  aiGenerated Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  inquiry      Inquiry?        @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
+  createdBy    User?           @relation("QuotationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  items        QuotationItem[]
+  reminders    Reminder[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@index([customerId])
+}
+
+model QuotationItem {
+  id          String  @id @default(cuid())
+  quotationId String
+  productId   String?
+
+  position       Int
+  description    String
+  quantity       Float  @default(1)
+  unit           String @default("unit")
+  unitPriceCents Int
+  taxRateBp      Int    @default(0)
+  lineTotalCents Int    @default(0)
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([quotationId])
+}
+
+model Reminder {
+  id             String @id @default(cuid())
+  organizationId String
+  quotationId    String
+
+  // "whatsapp" | "email" | "call"
+  channel String   @default("whatsapp")
+  // "pending" | "done" | "cancelled"
+  status  String   @default("pending")
+  dueAt   DateTime
+  note    String?
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation    @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, dueAt])
+}
+
+model UsageEvent {
+  id             String   @id @default(cuid())
+  organizationId String
+  // "ai_draft" | "quotation_created"
+  kind           String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, kind, createdAt])
+}
