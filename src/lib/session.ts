@@ -1,8 +1,10 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
+import { fingerprint, randomToken, safeEquals } from "./crypto";
 import { prisma } from "./db";
 import { getEnv } from "./env";
 import { UnauthorizedError } from "./errors";
+
+export { safeEquals };
 
 export const SESSION_COOKIE = "qf_session";
 export const SESSION_TTL_DAYS = 30;
@@ -13,14 +15,11 @@ export const SESSION_TTL_DAYS = 30;
  * usable session tokens.
  */
 function tokenFingerprint(token: string): string {
-  const secret = getEnv().SESSION_SECRET;
-  if (secret) return createHmac("sha256", secret).update(token).digest("hex");
-  // Development fallback: still never store the raw token.
-  return createHash("sha256").update(token).digest("hex");
+  return fingerprint(token);
 }
 
 export function generateSessionToken(): string {
-  return randomBytes(32).toString("base64url");
+  return randomToken(32);
 }
 
 export async function createSession(userId: string, organizationId: string) {
@@ -117,12 +116,4 @@ export async function destroyCurrentSession(): Promise<void> {
     await prisma.session.deleteMany({ where: { id: tokenFingerprint(token) } });
   }
   store.delete(SESSION_COOKIE);
-}
-
-/** Constant-time string compare for shared secrets (cron, webhooks). */
-export function safeEquals(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
 }

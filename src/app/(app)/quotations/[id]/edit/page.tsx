@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { Alert, Card, CardHeader, PageHeader } from "@/components/ui";
 import { prisma } from "@/lib/db";
-import { bpToInput, centsToInput, toDateInput } from "@/lib/format";
+import { bpToInput, centsToInput } from "@/lib/format";
 import { getQuotation } from "@/lib/quotations";
 import { NotFoundError } from "@/lib/errors";
 import { requireTenant } from "@/lib/tenant";
@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Edit quotation" };
 
 export default async function EditQuotationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { session, profile } = await requireTenant();
+  const { session, profile, fmt } = await requireTenant();
 
   let quotation;
   try {
@@ -58,6 +58,7 @@ export default async function EditQuotationPage({ params }: { params: Promise<{ 
           products={products}
           defaultCurrency={profile.currency}
           defaultTaxRateBp={profile.taxRateBp}
+          baseCurrency={profile.currency}
           locale={profile.locale}
           submitLabel="Save quotation"
           cancelHref={`/quotations/${quotation.id}`}
@@ -67,16 +68,19 @@ export default async function EditQuotationPage({ params }: { params: Promise<{ 
             inquiryId: quotation.inquiryId ?? "",
             title: quotation.title,
             currency: quotation.currency,
-            discount: centsToInput(quotation.discountCents),
+            discount: centsToInput(quotation.discountCents, quotation.currency),
             notes: quotation.notes ?? "",
             terms: quotation.terms ?? "",
-            validUntil: toDateInput(quotation.validUntil),
+            validUntil: fmt.dateInput(quotation.validUntil),
+            requireSignature: quotation.requireSignature,
+            exchangeRateToBase:
+              quotation.exchangeRateToBase === null ? "" : String(quotation.exchangeRateToBase),
             lines: quotation.items.map((item) => ({
               productId: item.productId ?? "",
               description: item.description,
               quantity: String(item.quantity),
               unit: item.unit,
-              unitPrice: centsToInput(item.unitPriceCents),
+              unitPrice: centsToInput(item.unitPriceCents, quotation.currency),
               taxRate: bpToInput(item.taxRateBp),
             })),
           }}

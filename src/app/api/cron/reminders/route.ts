@@ -3,6 +3,8 @@ import { jsonError } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { AppError, NotConfiguredError } from "@/lib/errors";
+import { expireLapsedQuotations } from "@/lib/follow-ups";
+import { pruneRateLimits } from "@/lib/rate-limit";
 import { safeEquals } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -35,10 +37,10 @@ async function handle(request: Request) {
 
   const now = new Date();
 
-  const expired = await prisma.quotation.updateMany({
-    where: { status: "sent", validUntil: { not: null, lt: now } },
-    data: { status: "expired" },
-  });
+  // Expiring also cancels the pending chase and writes a timeline row, so the
+  // owner can see why a quotation moved without anyone touching it.
+  const expired = await expireLapsedQuotations(now);
+  const prunedRateLimits = await pruneRateLimits(now);
 
   const due = await prisma.reminder.findMany({
     where: { status: "pending", dueAt: { lte: now } },
@@ -62,7 +64,11 @@ async function handle(request: Request) {
 
   return NextResponse.json({
     ranAt: now.toISOString(),
-    quotationsExpired: expired.count,
+    quotationsExpired: expired.expired,
+    rateLimitRowsPruned: prunedRateLimits,
+    // QuoteFlow has no outbound sender. These are handed back for the caller
+    // to deliver; nothing here claims a message was sent.
+    delivered: false,
     dueReminders: due.map((reminder) => ({
       id: reminder.id,
       organizationId: reminder.organizationId,

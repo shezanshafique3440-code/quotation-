@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmForm } from "@/components/confirm-form";
+import { Timeline } from "@/components/timeline";
 import { Alert, Badge, Card, CardHeader, PageHeader } from "@/components/ui";
+import { quotationTimeline } from "@/lib/activity";
+import { isAiConfigured } from "@/lib/env";
+import { shareUrl } from "@/lib/sharing";
 import {
   QUOTATION_STATUS_LABELS,
   QUOTATION_TRANSITIONS,
@@ -11,8 +15,7 @@ import {
   type ReminderChannel,
 } from "@/lib/constants";
 import { NotFoundError } from "@/lib/errors";
-import { formatDate, formatDateTime, formatRelative, toDateTimeInput } from "@/lib/format";
-import { formatBp, formatMoney } from "@/lib/money";
+import { formatBp } from "@/lib/money";
 import { getQuotation } from "@/lib/quotations";
 import { requireTenant } from "@/lib/tenant";
 import { buildQuotationMessage, normalizeWhatsAppNumber } from "@/lib/whatsapp";
@@ -25,7 +28,9 @@ import {
   completeReminderAction,
   snoozeReminderAction,
 } from "@/server/reminder-actions";
+import { FollowUpDrafter } from "./follow-up-drafter";
 import { ReminderForm } from "./reminder-form";
+import { SharePanel } from "./share-panel";
 import { WhatsAppPanel } from "./whatsapp-panel";
 
 export const metadata: Metadata = { title: "Quotation" };
@@ -44,7 +49,7 @@ export default async function QuotationDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { session, profile } = await requireTenant();
+  const { session, profile, fmt } = await requireTenant();
 
   let quotation;
   try {
@@ -55,8 +60,9 @@ export default async function QuotationDetailPage({
   }
 
   const status = quotation.status as QuotationStatus;
-  const money = (cents: number) => formatMoney(cents, quotation.currency, profile.locale);
+  const money = (cents: number) => fmt.money(cents, quotation.currency);
   const now = new Date();
+  const timeline = await quotationTimeline(session.organizationId, quotation.id);
 
   const whatsappMessage = buildQuotationMessage(quotation, {
     legalName: profile.legalName,
@@ -116,7 +122,7 @@ export default async function QuotationDetailPage({
 
       {expired ? (
         <Alert tone="warning" title="Past its validity date">
-          This quotation was valid until {formatDate(quotation.validUntil, profile.locale)}. Mark it
+          This quotation was valid until {fmt.date(quotation.validUntil)}. Mark it
           expired, or edit it back to draft and reissue.
         </Alert>
       ) : null}
@@ -126,7 +132,7 @@ export default async function QuotationDetailPage({
           title="Line items"
           description={
             quotation.validUntil
-              ? `Valid until ${formatDate(quotation.validUntil, profile.locale)}`
+              ? `Valid until ${fmt.date(quotation.validUntil)}`
               : "No validity date set"
           }
         />
@@ -211,6 +217,66 @@ export default async function QuotationDetailPage({
 
       <Card>
         <CardHeader
+          title="Share with the customer"
+          description="A link they can open to read the quotation and accept or decline it."
+        />
+        <SharePanel
+          quotationId={quotation.id}
+          enabled={quotation.publicEnabled && Boolean(quotation.publicToken)}
+          shareUrl={quotation.publicToken ? shareUrl(quotation.publicToken) : null}
+          isDraft={status === "draft"}
+          publicPagesEnabled={profile.publicPagesEnabled}
+          viewCount={quotation.viewCount}
+          firstViewedLabel={quotation.firstViewedAt ? fmt.dateTime(quotation.firstViewedAt) : null}
+          lastViewedLabel={quotation.lastViewedAt ? fmt.dateTime(quotation.lastViewedAt) : null}
+        />
+      </Card>
+
+      {quotation.respondedAt ? (
+        <Card>
+          <CardHeader
+            title="Customer response"
+            description={
+              quotation.decisionSource === "public_page"
+                ? "Recorded from the online quotation page."
+                : "Recorded by your team."
+            }
+          />
+          <dl className="grid gap-3 px-5 py-4 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-xs text-[var(--color-ink-subtle)]">Decision</dt>
+              <dd className="font-medium">
+                {QUOTATION_STATUS_LABELS[status] ?? status}
+                {quotation.respondedByName ? ` by ${quotation.respondedByName}` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-[var(--color-ink-subtle)]">When</dt>
+              <dd>{fmt.dateTime(quotation.respondedAt)}</dd>
+            </div>
+            {quotation.signedAt ? (
+              <div className="sm:col-span-2">
+                <dt className="text-xs text-[var(--color-ink-subtle)]">Electronic signature</dt>
+                <dd className="font-serif text-lg">{quotation.signatureName}</dd>
+                <dd className="text-xs text-[var(--color-ink-muted)]">
+                  Typed on {fmt.dateTime(quotation.signedAt)}
+                  {quotation.signatureEmail ? ` · ${quotation.signatureEmail}` : ""}
+                  {quotation.signatureIpHash ? " · IP recorded as a one-way hash" : ""}
+                </dd>
+              </div>
+            ) : null}
+            {quotation.rejectionReason ? (
+              <div className="sm:col-span-2">
+                <dt className="text-xs text-[var(--color-ink-subtle)]">Reason given</dt>
+                <dd className="whitespace-pre-wrap">{quotation.rejectionReason}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardHeader
           title="WhatsApp message"
           description="Edit the text, then open WhatsApp to send it yourself."
         />
@@ -224,9 +290,9 @@ export default async function QuotationDetailPage({
         <CardHeader
           title="Status"
           description={[
-            quotation.sentAt ? `Sent ${formatDateTime(quotation.sentAt, profile.locale)}` : null,
+            quotation.sentAt ? `Sent ${fmt.dateTime(quotation.sentAt)}` : null,
             quotation.decidedAt
-              ? `Decided ${formatDateTime(quotation.decidedAt, profile.locale)}`
+              ? `Decided ${fmt.dateTime(quotation.decidedAt)}`
               : null,
           ]
             .filter(Boolean)
@@ -287,9 +353,9 @@ export default async function QuotationDetailPage({
                         `Follow up by ${REMINDER_CHANNEL_LABELS[reminder.channel as ReminderChannel] ?? reminder.channel}`}
                     </p>
                     <p className="text-xs text-[var(--color-ink-muted)]">
-                      {formatDateTime(reminder.dueAt, profile.locale)}
+                      {fmt.dateTime(reminder.dueAt)}
                       {reminder.status === "pending"
-                        ? ` · ${formatRelative(reminder.dueAt, profile.locale, now)}`
+                        ? ` · ${fmt.relative(reminder.dueAt, now)}`
                         : ` · ${reminder.status}`}
                     </p>
                   </div>
@@ -332,9 +398,26 @@ export default async function QuotationDetailPage({
         <div className="border-t border-[var(--color-line)]">
           <ReminderForm
             quotationId={quotation.id}
-            defaultDueAt={toDateTimeInput(new Date(now.getTime() + 3 * 86_400_000))}
+            defaultDueAt={fmt.dateTimeInput(new Date(now.getTime() + 3 * 86_400_000))}
           />
         </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Draft a follow-up"
+          description="QuoteFlow writes the message; you send it."
+        />
+        <FollowUpDrafter quotationId={quotation.id} enabled={isAiConfigured()} />
+      </Card>
+
+      <Card>
+        <CardHeader title="Timeline" description="Every recorded event on this quotation." />
+        <Timeline
+          entries={timeline}
+          fmt={fmt}
+          emptyMessage="Nothing recorded yet. Events appear as the quotation is sent, opened and answered."
+        />
       </Card>
     </>
   );

@@ -1,4 +1,5 @@
 import Stripe from "stripe";
+import { ACTIVITY_KINDS, recordActivity } from "./activity";
 import { prisma } from "./db";
 import { getEnv, isBillingConfigured } from "./env";
 import { AppError, NotConfiguredError } from "./errors";
@@ -97,6 +98,7 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<{ handled: 
             typeof session.subscription === "string" ? session.subscription : undefined,
         },
       });
+      await logPlanChange(organizationId, "pro", "active", event.type);
       return { handled: true };
     }
 
@@ -118,6 +120,7 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<{ handled: 
           planRenewsAt: active && periodEnd ? new Date(periodEnd * 1000) : null,
         },
       });
+      await logPlanChange(organizationId, active ? "pro" : "free", subscription.status, event.type);
       return { handled: true };
     }
 
@@ -130,12 +133,31 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<{ handled: 
         where: { id: organizationId },
         data: { plan: "free", planStatus: "canceled", planRenewsAt: null },
       });
+      await logPlanChange(organizationId, "free", "canceled", event.type);
       return { handled: true };
     }
 
     default:
       return { handled: false };
   }
+}
+
+/** Every plan change is attributable to the Stripe event that caused it. */
+async function logPlanChange(
+  organizationId: string,
+  plan: string,
+  status: string,
+  eventType: string,
+): Promise<void> {
+  await recordActivity({
+    organizationId,
+    category: "billing",
+    kind: ACTIVITY_KINDS.planChanged,
+    summary: `Plan set to ${plan} (${status}) by Stripe`,
+    actorType: "system",
+    actorLabel: "Stripe webhook",
+    metadata: { plan, status, eventType },
+  });
 }
 
 export function constructWebhookEvent(rawBody: string, signature: string): Stripe.Event {

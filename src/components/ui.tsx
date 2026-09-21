@@ -143,8 +143,12 @@ export function Alert({
     brand: "border-[var(--color-brand)]/30 bg-[var(--color-brand-soft)] text-[var(--color-brand-strong)]",
   } as const;
 
+  // An error needs to interrupt a screen reader; a confirmation does not.
   return (
-    <div className={`rounded-xl border px-4 py-3 text-sm ${tones[tone]}`} role="status">
+    <div
+      className={`rounded-xl border px-4 py-3 text-sm ${tones[tone]}`}
+      role={tone === "danger" ? "alert" : "status"}
+    >
       {title ? <p className="font-semibold">{title}</p> : null}
       <div className={title ? "mt-0.5" : ""}>{children}</div>
     </div>

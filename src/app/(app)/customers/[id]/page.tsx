@@ -2,14 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmForm } from "@/components/confirm-form";
+import { Timeline } from "@/components/timeline";
 import { Badge, Card, CardHeader, PageHeader } from "@/components/ui";
+import { customerTimeline } from "@/lib/activity";
+import { hasActivePortalLink } from "@/lib/portal";
 import { QUOTATION_STATUS_LABELS, type QuotationStatus } from "@/lib/constants";
 import { prisma } from "@/lib/db";
-import { formatDate } from "@/lib/format";
-import { formatMoney } from "@/lib/money";
 import { requireTenant } from "@/lib/tenant";
 import { deleteCustomerAction, updateCustomerAction } from "@/server/customer-actions";
 import { CustomerForm } from "../customer-form";
+import { PortalPanel } from "./portal-panel";
 
 export const metadata: Metadata = { title: "Customer" };
 
@@ -19,7 +21,7 @@ export default async function CustomerDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { session, profile } = await requireTenant();
+  const { session, fmt } = await requireTenant();
 
   const customer = await prisma.customer.findFirst({
     where: { id, organizationId: session.organizationId },
@@ -29,6 +31,11 @@ export default async function CustomerDetailPage({
     },
   });
   if (!customer) notFound();
+
+  const [timeline, portal] = await Promise.all([
+    customerTimeline(session.organizationId, customer.id),
+    hasActivePortalLink(session.organizationId, customer.id),
+  ]);
 
   return (
     <>
@@ -48,6 +55,18 @@ export default async function CustomerDetailPage({
       </Card>
 
       <Card>
+        <CardHeader
+          title="Customer portal"
+          description="One page where this customer can see every quotation you have sent them."
+        />
+        <PortalPanel
+          customerId={customer.id}
+          hasActiveLink={portal.active}
+          expiresLabel={portal.expiresAt ? fmt.date(portal.expiresAt) : null}
+        />
+      </Card>
+
+      <Card>
         <CardHeader title={`Quotations (${customer.quotations.length})`} />
         {customer.quotations.length === 0 ? (
           <p className="px-5 py-6 text-sm text-[var(--color-ink-muted)]">
@@ -64,12 +83,12 @@ export default async function CustomerDetailPage({
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{q.title}</p>
                     <p className="text-xs text-[var(--color-ink-muted)]">
-                      {q.number} · {formatDate(q.createdAt, profile.locale)}
+                      {q.number} · {fmt.date(q.createdAt)}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
                     <span className="text-sm tabular-nums">
-                      {formatMoney(q.totalCents, q.currency, profile.locale)}
+                      {fmt.money(q.totalCents, q.currency)}
                     </span>
                     <Badge>{QUOTATION_STATUS_LABELS[q.status as QuotationStatus] ?? q.status}</Badge>
                   </div>
@@ -94,13 +113,25 @@ export default async function CustomerDetailPage({
                 >
                   <p className="truncate text-sm font-medium">{inquiry.subject}</p>
                   <p className="text-xs text-[var(--color-ink-muted)]">
-                    {inquiry.channel} · {formatDate(inquiry.receivedAt, profile.locale)}
+                    {inquiry.channel} · {fmt.date(inquiry.receivedAt)}
                   </p>
                 </Link>
               </li>
             ))}
           </ul>
         )}
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Activity"
+          description="Everything recorded for this customer, newest first."
+        />
+        <Timeline
+          entries={timeline}
+          fmt={fmt}
+          emptyMessage="No activity recorded yet for this customer."
+        />
       </Card>
 
       <Card>

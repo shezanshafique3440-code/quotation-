@@ -8,8 +8,6 @@ import {
   type ReminderChannel,
 } from "@/lib/constants";
 import { prisma } from "@/lib/db";
-import { formatDate, formatRelative } from "@/lib/format";
-import { formatMoney } from "@/lib/money";
 import { requireTenant } from "@/lib/tenant";
 import { getUsage } from "@/lib/usage";
 
@@ -24,12 +22,21 @@ const STATUS_TONE: Record<QuotationStatus, "neutral" | "brand" | "positive" | "w
 };
 
 export default async function DashboardPage() {
-  const { session, profile } = await requireTenant();
+  const { session, profile, fmt } = await requireTenant();
   const organizationId = session.organizationId;
   const now = new Date();
 
-  const [usage, statusGroups, acceptedAgg, sentAgg, newInquiries, recentQuotations, dueReminders] =
-    await Promise.all([
+  const [
+    usage,
+    statusGroups,
+    acceptedAgg,
+    sentAgg,
+    newInquiries,
+    recentQuotations,
+    dueReminders,
+    awaitingResponse,
+    openedCount,
+  ] = await Promise.all([
       getUsage(organizationId, now),
       prisma.quotation.groupBy({
         by: ["status"],
@@ -57,6 +64,10 @@ export default async function DashboardPage() {
         take: 5,
         include: { quotation: { select: { id: true, number: true, customer: { select: { name: true } } } } },
       }),
+      prisma.quotation.count({ where: { organizationId, status: "sent" } }),
+      prisma.quotation.count({
+        where: { organizationId, status: "sent", firstViewedAt: { not: null } },
+      }),
     ]);
 
   const counts = new Map(statusGroups.map((g) => [g.status, g._count._all]));
@@ -64,7 +75,7 @@ export default async function DashboardPage() {
   const decided = (counts.get("accepted") ?? 0) + (counts.get("rejected") ?? 0);
   const winRate = decided === 0 ? null : Math.round(((counts.get("accepted") ?? 0) / decided) * 100);
 
-  const money = (cents: number) => formatMoney(cents, profile.currency, profile.locale);
+  const money = (cents: number) => fmt.money(cents);
 
   return (
     <>
@@ -76,7 +87,15 @@ export default async function DashboardPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Open inquiries" value={String(newInquiries)} sub="Not yet quoted" />
-        <Stat label="Out for decision" value={money(sentAgg._sum.totalCents ?? 0)} sub={`${counts.get("sent") ?? 0} sent`} />
+        <Stat
+          label="Out for decision"
+          value={money(sentAgg._sum.totalCents ?? 0)}
+          sub={
+            awaitingResponse === 0
+              ? "Nothing waiting"
+              : `${openedCount} of ${awaitingResponse} opened`
+          }
+        />
         <Stat label="Won" value={money(acceptedAgg._sum.totalCents ?? 0)} sub={`${counts.get("accepted") ?? 0} accepted`} />
         <Stat
           label="Win rate"
@@ -110,12 +129,12 @@ export default async function DashboardPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{q.title}</p>
                       <p className="truncate text-xs text-[var(--color-ink-muted)]">
-                        {q.number} · {q.customer.name} · {formatDate(q.createdAt, profile.locale)}
+                        {q.number} · {q.customer.name} · {fmt.date(q.createdAt)}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
                       <span className="text-sm font-medium tabular-nums">
-                        {formatMoney(q.totalCents, q.currency, profile.locale)}
+                        {fmt.money(q.totalCents, q.currency)}
                       </span>
                       <Badge tone={STATUS_TONE[q.status as QuotationStatus] ?? "neutral"}>
                         {QUOTATION_STATUS_LABELS[q.status as QuotationStatus] ?? q.status}
@@ -149,7 +168,7 @@ export default async function DashboardPage() {
                       {r.quotation.number} ·{" "}
                       {REMINDER_CHANNEL_LABELS[r.channel as ReminderChannel] ?? r.channel} ·{" "}
                       <span className={r.dueAt <= now ? "text-[var(--color-danger)]" : ""}>
-                        {formatRelative(r.dueAt, profile.locale, now)}
+                        {fmt.relative(r.dueAt, now)}
                       </span>
                     </p>
                   </li>

@@ -50,6 +50,9 @@ model Organization {
   quotations  Quotation[]
   reminders   Reminder[]
   usageEvents UsageEvent[]
+  templates   QuotationTemplate[]
+  events      ActivityEvent[]
+  portalTokens CustomerPortalToken[]
 }
 
 model BusinessProfile {
@@ -76,6 +79,21 @@ model BusinessProfile {
   defaultValidityDays Int  @default(14)
   defaultTerms   String?
   defaultNotes   String?
+
+  /// IANA zone (e.g. "Europe/Berlin"). Every date shown to a user and every
+  /// end-of-day expiry boundary is resolved in this zone, not the server's.
+  timezone       String  @default("UTC")
+
+  // Branding applied to the shareable quote page, the portal and the PDF.
+  brandColor     String  @default("#4B3DDB")
+  portalHeadline String?
+  portalMessage  String?
+
+  // Quote-to-close defaults, overridable per quotation.
+  publicPagesEnabled   Boolean @default(true)
+  requireSignature     Boolean @default(false)
+  autoFollowUpEnabled  Boolean @default(true)
+  autoFollowUpDays     Int     @default(3)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -128,6 +146,8 @@ model Customer {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   inquiries    Inquiry[]
   quotations   Quotation[]
+  events       ActivityEvent[]
+  portalTokens CustomerPortalToken[]
 
   @@index([organizationId, name])
 }
@@ -167,8 +187,9 @@ model Product {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  items        QuotationItem[]
+  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items         QuotationItem[]
+  templateItems QuotationTemplateItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId, active])
@@ -199,6 +220,39 @@ model Quotation {
   sentAt     DateTime?
   decidedAt  DateTime?
 
+  /// Share-link token. Stored in the clear because the owner must be able to
+  /// re-copy the link; it is revocable and only ever grants read + respond on
+  /// this one quotation. Disabling `publicEnabled` blocks it immediately.
+  publicToken   String?   @unique
+  publicEnabled Boolean   @default(false)
+  publicOpenedAt DateTime?
+
+  // Engagement, recorded from real page views of the share link only.
+  firstViewedAt DateTime?
+  lastViewedAt  DateTime?
+  viewCount     Int       @default(0)
+
+  // Customer decision, distinct from the owner moving the status by hand.
+  decisionSource  String?
+  respondedAt     DateTime?
+  respondedByName String?
+  rejectionReason String?
+
+  // Optional typed e-signature captured on the share page.
+  requireSignature Boolean   @default(false)
+  signatureName    String?
+  signatureEmail   String?
+  signedAt         DateTime?
+  /// HMAC of the signer's IP — evidentiary without storing the address itself.
+  signatureIpHash  String?
+
+  /// Reporting currency and the rate recorded when the quote was written.
+  /// Null rate means "not converted"; analytics exclude it rather than guess.
+  baseCurrency       String?
+  exchangeRateToBase Float?
+
+  templateId String?
+
   // Provenance of the draft: null when hand-written, otherwise the model id used.
   aiModel     String?
   aiGenerated Boolean @default(false)
@@ -210,11 +264,14 @@ model Quotation {
   customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   inquiry      Inquiry?        @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
   createdBy    User?           @relation("QuotationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  template     QuotationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   items        QuotationItem[]
   reminders    Reminder[]
+  events       ActivityEvent[]
 
   @@unique([organizationId, number])
   @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@index([customerId])
 }
 
@@ -249,6 +306,12 @@ model Reminder {
   dueAt   DateTime
   note    String?
 
+  /// True when the system scheduled this after the quote was sent, rather
+  /// than a person adding it. Auto follow-ups are cancelled on a decision.
+  autoCreated Boolean @default(false)
+  /// A drafted follow-up message. Drafted only; QuoteFlow never sends it.
+  messageDraft String?
+
   completedAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -269,4 +332,118 @@ model UsageEvent {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, kind, createdAt])
+}
+
+/// A reusable starting point for a quotation: default terms, validity,
+/// signature policy and a set of pre-priced lines.
+model QuotationTemplate {
+  id             String  @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  isDefault      Boolean @default(false)
+
+  titlePattern     String?
+  notes            String?
+  terms            String?
+  validityDays     Int     @default(14)
+  requireSignature Boolean @default(false)
+  currency         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items        QuotationTemplateItem[]
+  quotations   Quotation[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isDefault])
+}
+
+model QuotationTemplateItem {
+  id         String @id @default(cuid())
+  templateId String
+  productId  String?
+
+  position       Int
+  description    String
+  quantity       Float  @default(1)
+  unit           String @default("unit")
+  unitPriceCents Int
+  taxRateBp      Int    @default(0)
+
+  template QuotationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  product  Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([templateId])
+}
+
+/// Append-only record of everything that happened, used for three things:
+/// the per-quotation timeline, the per-customer timeline, and the security
+/// audit log. `category` separates them; rows are never updated or deleted
+/// by application code.
+model ActivityEvent {
+  id             String @id @default(cuid())
+  organizationId String
+
+  /// "quotation" | "customer" | "security" | "billing" | "settings"
+  category String
+  /// Specific event name, e.g. "quotation.viewed" (see src/lib/activity.ts).
+  kind     String
+
+  /// "user" | "customer" | "system" | "anonymous"
+  actorType  String
+  actorId    String?
+  actorLabel String
+
+  quotationId String?
+  customerId  String?
+
+  summary  String
+  /// JSON blob of event-specific detail. Never holds secrets.
+  metadata String?
+
+  /// HMAC of the request IP — correlatable without storing the address.
+  ipHash    String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation?   @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  customer     Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, category, createdAt])
+  @@index([quotationId, createdAt])
+  @@index([customerId, createdAt])
+}
+
+/// Passwordless access to the customer portal. The primary key is an HMAC of
+/// the link token, so the database never holds a usable link.
+model CustomerPortalToken {
+  id             String    @id
+  organizationId String
+  customerId     String
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, revokedAt])
+  @@index([expiresAt])
+}
+
+/// Fixed-window rate limit counters. Living in the database means the limit
+/// is shared across instances instead of being per-process.
+model RateLimitCounter {
+  key          String   @id
+  count        Int      @default(0)
+  windowEndsAt DateTime
+
+  @@index([windowEndsAt])
 }

@@ -1,7 +1,22 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
 import { PLAN_LIMITS } from "@/lib/plans";
+
+export const metadata: Metadata = {
+  title: "QuoteFlow AI — quote-to-close for small businesses",
+  description:
+    "Capture inquiries, draft quotations with AI, send a link your customer can accept or decline, and never lose a follow-up. Multi-currency, timezone-aware, built for small teams worldwide.",
+  alternates: { canonical: "/" },
+  openGraph: {
+    title: "QuoteFlow AI — quote-to-close for small businesses",
+    description:
+      "From “can you give me a price?” to a signed acceptance, without a CRM.",
+    type: "website",
+    url: "/",
+  },
+};
 
 const FEATURES = [
   {
@@ -25,6 +40,18 @@ const FEATURES = [
     body: "A typeset A4 quotation with your business details, tax breakdown and terms. One click, no template wrangling.",
   },
   {
+    title: "Accept or decline, online",
+    body: "Send a link. Your customer reads the quotation, accepts or declines it, and optionally signs — you see the decision the moment it happens.",
+  },
+  {
+    title: "Analytics you can trust",
+    body: "Sent, opened, accepted, declined, expired. Opens come from real page views, never from an assumption that a sent quote was read.",
+  },
+  {
+    title: "Multi-currency and timezone-aware",
+    body: "Quote in 45 currencies with the correct minor units, and let “valid until Friday” mean Friday where your business actually is.",
+  },
+  {
     title: "Your data, scoped",
     body: "Every record is tied to your workspace and checked on every request. Sessions are hashed, never stored raw.",
   },
@@ -35,20 +62,6 @@ export default async function LandingPage() {
 
   return (
     <main>
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8">
-        <span className="text-sm font-semibold tracking-tight">
-          QuoteFlow<span className="text-[var(--color-brand)]"> AI</span>
-        </span>
-        <nav className="flex items-center gap-2">
-          <Link href="/sign-in" className="btn btn-ghost">
-            Sign in
-          </Link>
-          <Link href="/sign-up" className="btn btn-primary">
-            Start free
-          </Link>
-        </nav>
-      </header>
-
       <section className="mx-auto max-w-6xl px-5 pb-16 pt-10 sm:px-8 sm:pt-20">
         <p className="inline-flex rounded-full bg-[var(--color-brand-soft)] px-3 py-1 text-xs font-medium text-[var(--color-brand-strong)]">
           Built for small businesses that quote over WhatsApp
@@ -110,13 +123,6 @@ export default async function LandingPage() {
           </div>
         </div>
       </section>
-
-      <footer className="border-t border-[var(--color-line)] px-5 py-8 sm:px-8">
-        <p className="mx-auto max-w-6xl text-xs text-[var(--color-ink-subtle)]">
-          QuoteFlow AI — AI drafting and payments are optional integrations, configured per
-          deployment.
-        </p>
-      </footer>
     </main>
   );
 }

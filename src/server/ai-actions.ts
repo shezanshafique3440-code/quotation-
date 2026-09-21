@@ -8,7 +8,7 @@ import {
   toActionState,
   type ActionState,
 } from "@/lib/action-state";
-import { generateQuotationDraft } from "@/lib/ai";
+import { generateFollowUpMessage, generateQuotationDraft } from "@/lib/ai";
 import { mapDraftToQuotationInput } from "@/lib/ai-draft";
 import { prisma } from "@/lib/db";
 import { isAiConfigured } from "@/lib/env";
@@ -17,7 +17,12 @@ import { text } from "@/lib/form";
 import { createQuotation } from "@/lib/quotations";
 import { requireSession } from "@/lib/session";
 import { assertWithinLimit, recordUsage } from "@/lib/usage";
-import { aiDraftSchema, fieldErrors } from "@/lib/validation";
+import { ACTIVITY_KINDS, recordActivity } from "@/lib/activity";
+import { enforceRateLimit } from "@/lib/rate-limit";
+import { formatMoney } from "@/lib/money";
+import { formatDate } from "@/lib/format";
+import { loadTenantProfile } from "@/lib/tenant";
+import { aiDraftSchema, fieldErrors, followUpDraftSchema } from "@/lib/validation";
 
 /**
  * Turn an inquiry into an editable draft quotation.
@@ -48,6 +53,7 @@ export async function generateDraftAction(
 
     // Both meters are checked up front so we never spend a model call we
     // cannot turn into a saved quotation.
+    await enforceRateLimit("aiGenerate", `org:${session.organizationId}`);
     await assertWithinLimit(session.organizationId, "aiDraftsPerMonth");
     await assertWithinLimit(session.organizationId, "quotationsPerMonth");
 
@@ -113,6 +119,8 @@ export async function generateDraftAction(
       userId: session.userId,
       input: mapped.input,
       numberPrefix: profile.quoteNumberPrefix,
+      baseCurrency: profile.currency,
+      defaultRequireSignature: profile.requireSignature,
       ai: { model: result.model },
     });
 
@@ -121,6 +129,24 @@ export async function generateDraftAction(
     await prisma.inquiry.updateMany({
       where: { id: inquiry.id, organizationId: session.organizationId, status: "new" },
       data: { status: "quoted" },
+    });
+
+    await recordActivity({
+      organizationId: session.organizationId,
+      category: "quotation",
+      kind: ACTIVITY_KINDS.aiDrafted,
+      summary: `AI drafted ${quotation.number} from the inquiry "${inquiry.subject}"`,
+      actorType: "user",
+      actorId: session.userId,
+      actorLabel: session.user.name,
+      quotationId: quotation.id,
+      customerId: inquiry.customerId,
+      metadata: {
+        model: result.model,
+        droppedLines: mapped.rejected.length,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+      },
     });
 
     revalidatePath("/quotations");
@@ -133,6 +159,115 @@ export async function generateDraftAction(
       quotationNumber: quotation.number,
       summary: mapped.summary,
       rejected: mapped.rejected,
+      model: result.model,
+    });
+  } catch (error) {
+    if (isFrameworkError(error)) throw error;
+    return toActionState(error);
+  }
+}
+
+
+/**
+ * Draft a follow-up message for a quotation that has gone quiet.
+ *
+ * The draft is saved against the reminder so the owner can find it again, and
+ * nothing is sent: QuoteFlow has no outbound channel, and the UI says so.
+ */
+export async function draftFollowUpAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const session = await requireSession();
+
+    if (!isAiConfigured()) {
+      throw new NotConfiguredError(
+        "AI drafting is not enabled on this deployment. Ask your administrator to set AI_PROVIDER and ANTHROPIC_API_KEY, or write the follow-up yourself.",
+      );
+    }
+
+    const parsed = followUpDraftSchema.safeParse({
+      quotationId: text(formData, "quotationId"),
+      reminderId: text(formData, "reminderId"),
+      instructions: text(formData, "instructions"),
+    });
+    if (!parsed.success) {
+      return errorState("Please fix the highlighted fields.", fieldErrors(parsed.error));
+    }
+
+    await enforceRateLimit("aiGenerate", `org:${session.organizationId}`);
+    await assertWithinLimit(session.organizationId, "aiDraftsPerMonth");
+
+    const quotation = await prisma.quotation.findFirst({
+      where: { id: parsed.data.quotationId, organizationId: session.organizationId },
+      include: { customer: true },
+    });
+    if (!quotation) throw new NotFoundError("Quotation not found.");
+
+    const profile = await loadTenantProfile(session.organizationId, session.organization.name);
+
+    const previousFollowUps = await prisma.reminder.count({
+      where: { quotationId: quotation.id, status: "done" },
+    });
+
+    const sentAgoDays = quotation.sentAt
+      ? Math.max(0, Math.round((Date.now() - quotation.sentAt.getTime()) / 86_400_000))
+      : null;
+
+    const result = await generateFollowUpMessage({
+      business: { legalName: profile.legalName, senderName: session.user.name },
+      customer: { name: quotation.customer.name, company: quotation.customer.company },
+      quotation: {
+        number: quotation.number,
+        title: quotation.title,
+        totalFormatted: formatMoney(quotation.totalCents, quotation.currency, profile.locale),
+        status: quotation.status,
+        sentAgoDays,
+        validUntilFormatted: quotation.validUntil
+          ? formatDate(quotation.validUntil, profile.locale, profile.timezone)
+          : null,
+        viewCount: quotation.viewCount,
+        everViewed: quotation.firstViewedAt !== null,
+        notes: quotation.notes,
+      },
+      previousFollowUps,
+      instructions: parsed.data.instructions,
+    });
+
+    await recordUsage(session.organizationId, "ai_draft");
+
+    if (parsed.data.reminderId) {
+      await prisma.reminder.updateMany({
+        where: {
+          id: parsed.data.reminderId,
+          organizationId: session.organizationId,
+          quotationId: quotation.id,
+        },
+        data: { messageDraft: result.draft.whatsapp_message.slice(0, 4000) },
+      });
+    }
+
+    await recordActivity({
+      organizationId: session.organizationId,
+      category: "quotation",
+      kind: ACTIVITY_KINDS.aiFollowUpDrafted,
+      summary: `AI drafted a follow-up for ${quotation.number}`,
+      actorType: "user",
+      actorId: session.userId,
+      actorLabel: session.user.name,
+      quotationId: quotation.id,
+      customerId: quotation.customerId,
+      metadata: { model: result.model },
+    });
+
+    revalidatePath(`/quotations/${quotation.id}`);
+    revalidatePath("/reminders");
+
+    return successState("Follow-up drafted. Review it, then send it yourself.", {
+      whatsappMessage: result.draft.whatsapp_message,
+      emailSubject: result.draft.email_subject,
+      emailBody: result.draft.email_body,
       model: result.model,
     });
   } catch (error) {

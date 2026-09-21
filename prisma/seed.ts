@@ -4,6 +4,7 @@
  *
  * Run with: npm run db:seed
  */
+import { randomBytes } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { hashPassword } from "../src/lib/password";
 import { computeTotals } from "../src/lib/money";
@@ -44,6 +45,13 @@ async function main() {
           taxId: "GB123456789",
           taxRateBp: 2000,
           quoteNumberPrefix: "NJ",
+          timezone: "Europe/London",
+          brandColor: "#1f7a5a",
+          portalHeadline: "Your quotations from Northline",
+          portalMessage:
+            "Everything we have quoted you. Open one to accept or decline it — or reply on WhatsApp if something needs changing.",
+          autoFollowUpEnabled: true,
+          autoFollowUpDays: 3,
           defaultValidityDays: 21,
           defaultTerms:
             "50% deposit to book the slot, balance due on completion. Prices exclude delivery outside West Yorkshire.",
@@ -129,7 +137,52 @@ async function main() {
     5_000,
   );
 
-  await prisma.quotation.create({
+  const template = await prisma.quotationTemplate.create({
+    data: {
+      organizationId: organization.id,
+      name: "Alcove shelving — standard",
+      description: "The job we quote most weeks.",
+      titlePattern: "{subject}",
+      isDefault: true,
+      validityDays: 21,
+      requireSignature: true,
+      notes: "Lead time is currently 3-4 weeks from deposit.",
+      terms: "50% deposit to book the slot, balance due on completion.",
+      items: {
+        create: [
+          {
+            productId: products[2]!.id,
+            position: 0,
+            description: "Site survey and setting out",
+            quantity: 1,
+            unit: "visit",
+            unitPriceCents: products[2]!.unitPriceCents,
+            taxRateBp: 2000,
+          },
+          {
+            productId: products[0]!.id,
+            position: 1,
+            description: "Bespoke oak shelving",
+            quantity: 3.6,
+            unit: "linear metre",
+            unitPriceCents: products[0]!.unitPriceCents,
+            taxRateBp: 2000,
+          },
+          {
+            productId: products[3]!.id,
+            position: 2,
+            description: "Fitting labour, two fitters",
+            quantity: 6,
+            unit: "hour",
+            unitPriceCents: products[3]!.unitPriceCents,
+            taxRateBp: 2000,
+          },
+        ],
+      },
+    },
+  });
+
+  const quotation = await prisma.quotation.create({
     data: {
       organizationId: organization.id,
       number: "NJ-2026-0001",
@@ -147,6 +200,13 @@ async function main() {
       notes: "Oak option quoted. Sprayed birch ply would come in around 30% lower — say the word.",
       terms: "50% deposit to book the slot, balance due on completion.",
       validUntil: new Date(Date.now() + 21 * 86_400_000),
+      templateId: template.id,
+      baseCurrency: "GBP",
+      exchangeRateToBase: 1,
+      requireSignature: true,
+      // A live share link, so the demo workspace shows the customer-facing page.
+      publicToken: randomBytes(24).toString("base64url"),
+      publicEnabled: true,
       items: {
         create: items.map((item, index) => ({
           productId: item.product.id,
@@ -174,8 +234,101 @@ async function main() {
     data: { organizationId: organization.id, kind: "quotation_created" },
   });
 
+  // A short timeline so the activity views are not empty on a fresh install.
+  await prisma.activityEvent.createMany({
+    data: [
+      {
+        organizationId: organization.id,
+        category: "quotation",
+        kind: "quotation.created",
+        summary: `Sam Rivera created ${quotation.number}`,
+        actorType: "user",
+        actorId: user.id,
+        actorLabel: "Sam Rivera",
+        quotationId: quotation.id,
+        customerId: customer.id,
+        createdAt: new Date(Date.now() - 2 * 86_400_000),
+      },
+      {
+        organizationId: organization.id,
+        category: "quotation",
+        kind: "quotation.sent",
+        summary: `Sam Rivera marked ${quotation.number} as sent`,
+        actorType: "user",
+        actorId: user.id,
+        actorLabel: "Sam Rivera",
+        quotationId: quotation.id,
+        customerId: customer.id,
+        createdAt: new Date(Date.now() - 2 * 86_400_000 + 3_600_000),
+      },
+    ],
+  });
+
+  // A little history, so the analytics page and the funnel are not empty on a
+  // fresh install. Each one carries the timestamps the funnel actually reads.
+  const history: {
+    status: string;
+    daysAgo: number;
+    totalCents: number;
+    title: string;
+  }[] = [
+    { status: "accepted", daysAgo: 100, totalCents: 410_000, title: "Boot room joinery — Roundhay" },
+    { status: "accepted", daysAgo: 70, totalCents: 320_000, title: "Under-stairs storage — Horsforth" },
+    { status: "expired", daysAgo: 68, totalCents: 140_000, title: "Garage shelving — Meanwood" },
+    { status: "accepted", daysAgo: 40, totalCents: 250_000, title: "Media wall — Headingley" },
+    { status: "rejected", daysAgo: 38, totalCents: 180_000, title: "Wardrobe doors — Kirkstall" },
+    { status: "rejected", daysAgo: 14, totalCents: 96_000, title: "Window seat — Armley" },
+    { status: "accepted", daysAgo: 12, totalCents: 175_000, title: "Home office desk — Bramley" },
+    { status: "sent", daysAgo: 9, totalCents: 220_000, title: "Pantry fit-out — Adel" },
+  ];
+
+  const day = 86_400_000;
+  for (const [index, entry] of history.entries()) {
+    const sentAt = new Date(Date.now() - entry.daysAgo * day);
+    const decided = entry.status === "accepted" || entry.status === "rejected";
+
+    await prisma.quotation.create({
+      data: {
+        organizationId: organization.id,
+        number: `NJ-2025-${String(index + 1).padStart(4, "0")}`,
+        customerId: customer.id,
+        createdById: user.id,
+        status: entry.status,
+        title: entry.title,
+        currency: "GBP",
+        baseCurrency: "GBP",
+        exchangeRateToBase: 1,
+        subtotalCents: entry.totalCents,
+        taxCents: 0,
+        totalCents: entry.totalCents,
+        createdAt: sentAt,
+        sentAt,
+        // Only quotations that were actually opened carry a view timestamp.
+        firstViewedAt: entry.status === "sent" ? null : new Date(sentAt.getTime() + 2 * 3_600_000),
+        lastViewedAt: entry.status === "sent" ? null : new Date(sentAt.getTime() + 2 * 3_600_000),
+        viewCount: entry.status === "sent" ? 0 : 2,
+        respondedAt: decided ? new Date(sentAt.getTime() + 2 * day) : null,
+        decidedAt: decided ? new Date(sentAt.getTime() + 2 * day) : null,
+        decisionSource: decided ? "public_page" : null,
+        respondedByName: decided ? "Dana Whitfield" : null,
+        items: {
+          create: {
+            position: 0,
+            description: entry.title,
+            quantity: 1,
+            unit: "job",
+            unitPriceCents: entry.totalCents,
+            taxRateBp: 0,
+            lineTotalCents: entry.totalCents,
+          },
+        },
+      },
+    });
+  }
+
   console.log("Seed complete.");
   console.log(`  Sign in with ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  console.log(`  Public quotation page: /q/${quotation.publicToken}`);
 }
 
 main()

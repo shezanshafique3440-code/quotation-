@@ -5,6 +5,7 @@ import { useActionState, useMemo, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert, Field } from "@/components/ui";
 import { idleState, type ActionState } from "@/lib/action-state";
+import { CURRENCIES, minorUnitDigits } from "@/lib/currency";
 import { computeTotals, formatMoney, parseAmountToCents } from "@/lib/money";
 
 export interface EditorProduct {
@@ -36,12 +37,15 @@ export interface EditorValues {
   id?: string;
   customerId?: string;
   inquiryId?: string;
+  templateId?: string;
   title?: string;
   currency?: string;
   discount?: string;
   notes?: string;
   terms?: string;
   validUntil?: string;
+  requireSignature?: boolean;
+  exchangeRateToBase?: string;
   lines?: Omit<EditorLine, "key">[];
 }
 
@@ -64,9 +68,9 @@ function blankLine(defaultTaxRate: string): EditorLine {
 }
 
 /** Parse a user-entered amount without throwing, for the live preview only. */
-function safeCents(value: string): number {
+function safeCents(value: string, currency: string): number {
   try {
-    return parseAmountToCents(value);
+    return parseAmountToCents(value, currency);
   } catch {
     return 0;
   }
@@ -89,6 +93,7 @@ export function QuotationEditor({
   values = {},
   defaultCurrency,
   defaultTaxRateBp,
+  baseCurrency,
   locale,
   submitLabel,
   cancelHref,
@@ -99,6 +104,8 @@ export function QuotationEditor({
   values?: EditorValues;
   defaultCurrency: string;
   defaultTaxRateBp: number;
+  /** The workspace reporting currency, which decides whether a rate is needed. */
+  baseCurrency: string;
   locale: string;
   submitLabel: string;
   cancelHref: string;
@@ -120,7 +127,7 @@ export function QuotationEditor({
     const priced = lines
       .map((line) => ({
         quantity: safeQuantity(line.quantity),
-        unitPriceCents: safeCents(line.unitPrice),
+        unitPriceCents: safeCents(line.unitPrice, currency),
         taxRateBp: safeBp(line.taxRate),
       }))
       .filter((line) => line.quantity > 0);
@@ -129,11 +136,11 @@ export function QuotationEditor({
       return { lines: [], subtotalCents: 0, discountCents: 0, taxCents: 0, totalCents: 0 };
     }
     try {
-      return computeTotals(priced, safeCents(discount));
+      return computeTotals(priced, safeCents(discount, currency));
     } catch {
       return { lines: [], subtotalCents: 0, discountCents: 0, taxCents: 0, totalCents: 0 };
     }
-  }, [lines, discount]);
+  }, [lines, discount, currency]);
 
   const money = (cents: number) => formatMoney(cents, currency, locale);
 
@@ -147,11 +154,13 @@ export function QuotationEditor({
       updateLine(key, { productId: "" });
       return;
     }
+    const digits = minorUnitDigits(currency);
     updateLine(key, {
       productId,
       description: product.description?.trim() || product.name,
       unit: product.unit,
-      unitPrice: (product.unitPriceCents / 100).toFixed(2),
+      // Catalog prices are stored in the workspace currency's minor units.
+      unitPrice: (product.unitPriceCents / 10 ** digits).toFixed(digits),
       taxRate: String(product.taxRateBp / 100),
     });
   };
@@ -179,6 +188,9 @@ export function QuotationEditor({
 
       {values.id ? <input type="hidden" name="id" value={values.id} /> : null}
       {values.inquiryId ? <input type="hidden" name="inquiryId" value={values.inquiryId} /> : null}
+      {values.templateId ? (
+        <input type="hidden" name="templateId" value={values.templateId} />
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Customer" htmlFor="customerId" error={errors.customerId}>
@@ -201,16 +213,30 @@ export function QuotationEditor({
           </select>
         </Field>
 
-        <Field label="Currency" htmlFor="currency" error={errors.currency}>
-          <input
+        <Field
+          label="Currency"
+          htmlFor="currency"
+          error={errors.currency}
+          hint={
+            currency === baseCurrency
+              ? undefined
+              : `Reporting currency is ${baseCurrency}. Add a rate below to include this quote in converted totals.`
+          }
+        >
+          <select
             id="currency"
             name="currency"
-            className="input uppercase"
-            maxLength={3}
+            className="input"
             required
             value={currency}
-            onChange={(event) => setCurrency(event.target.value.toUpperCase())}
-          />
+            onChange={(event) => setCurrency(event.target.value)}
+          >
+            {CURRENCIES.map((entry) => (
+              <option key={entry.code} value={entry.code}>
+                {entry.code} — {entry.name}
+              </option>
+            ))}
+          </select>
         </Field>
       </div>
 
@@ -246,7 +272,9 @@ export function QuotationEditor({
 
         <div className="space-y-3">
           {lines.map((line, index) => {
-            const lineTotal = Math.round(safeQuantity(line.quantity) * safeCents(line.unitPrice));
+            const lineTotal = Math.round(
+              safeQuantity(line.quantity) * safeCents(line.unitPrice, currency),
+            );
             const rowErrors = {
               description: errors[`items.${index}.description`],
               quantity: errors[`items.${index}.quantity`],
@@ -389,7 +417,12 @@ export function QuotationEditor({
             onChange={(event) => setDiscount(event.target.value)}
           />
         </Field>
-        <Field label="Valid until" htmlFor="validUntil" error={errors.validUntil}>
+        <Field
+          label="Valid until"
+          htmlFor="validUntil"
+          error={errors.validUntil}
+          hint="Expires at the end of this day in your business timezone."
+        >
           <input
             id="validUntil"
             name="validUntil"
@@ -399,6 +432,40 @@ export function QuotationEditor({
           />
         </Field>
       </div>
+
+      {currency !== baseCurrency ? (
+        <Field
+          label={`Exchange rate — 1 ${currency} in ${baseCurrency}`}
+          htmlFor="exchangeRateToBase"
+          error={errors.exchangeRateToBase}
+          hint="Optional. Left blank, this quotation is excluded from converted totals rather than estimated."
+        >
+          <input
+            id="exchangeRateToBase"
+            name="exchangeRateToBase"
+            className="input tabular-nums sm:max-w-56"
+            inputMode="decimal"
+            defaultValue={values.exchangeRateToBase ?? ""}
+            placeholder="1.08"
+          />
+        </Field>
+      ) : null}
+
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          name="requireSignature"
+          defaultChecked={values.requireSignature ?? false}
+          className="mt-0.5 size-4 rounded border-[var(--color-line)]"
+        />
+        <span>
+          Require a typed signature when the customer accepts
+          <span className="block text-xs text-[var(--color-ink-subtle)]">
+            Their name, the timestamp and a one-way hash of their IP are recorded with the
+            acceptance.
+          </span>
+        </span>
+      </label>
 
       <div className="rounded-xl bg-[var(--color-surface-2)] p-4">
         <dl className="ml-auto max-w-xs space-y-1.5 text-sm">

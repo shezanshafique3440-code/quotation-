@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Card, CardHeader, PageHeader } from "@/components/ui";
 import { bpToInput } from "@/lib/format";
+import { listTimeZones } from "@/lib/timezone";
 import { requireTenant } from "@/lib/tenant";
 import { BusinessProfileForm } from "./form";
 
@@ -8,6 +9,7 @@ export const metadata: Metadata = { title: "Business profile" };
 
 export default async function BusinessProfilePage() {
   const { profile } = await requireTenant();
+  const timeZones = listTimeZones();
 
   return (
     <>
@@ -19,6 +21,7 @@ export default async function BusinessProfilePage() {
       <Card>
         <CardHeader title="Details" />
         <BusinessProfileForm
+          timeZones={timeZones}
           values={{
             legalName: profile.legalName,
             currency: profile.currency,
@@ -39,6 +42,14 @@ export default async function BusinessProfilePage() {
             defaultValidityDays: String(profile.defaultValidityDays),
             defaultTerms: profile.defaultTerms ?? "",
             defaultNotes: profile.defaultNotes ?? "",
+            timezone: profile.timezone,
+            brandColor: profile.brandColor,
+            portalHeadline: profile.portalHeadline ?? "",
+            portalMessage: profile.portalMessage ?? "",
+            publicPagesEnabled: profile.publicPagesEnabled,
+            requireSignature: profile.requireSignature,
+            autoFollowUpEnabled: profile.autoFollowUpEnabled,
+            autoFollowUpDays: String(profile.autoFollowUpDays),
           }}
         />
       </Card>

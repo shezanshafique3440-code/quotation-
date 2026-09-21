@@ -10,6 +10,7 @@ export const quotationInclude = {
   inquiry: { select: { id: true, subject: true } },
   items: { orderBy: { position: "asc" } },
   reminders: { orderBy: { dueAt: "asc" } },
+  template: { select: { id: true, name: true } },
 } satisfies Prisma.QuotationInclude;
 
 export type QuotationWithRelations = Prisma.QuotationGetPayload<{
@@ -57,7 +58,26 @@ interface CreateArgs {
   userId: string;
   input: QuotationInput;
   numberPrefix: string;
+  /** Reporting currency, stored alongside the rate for later analytics. */
+  baseCurrency?: string;
+  /** Workspace default, used when the form did not state a preference. */
+  defaultRequireSignature?: boolean;
   ai?: { model: string } | null;
+}
+
+/**
+ * Resolve the FX rate to store.
+ *
+ * Same currency is always exactly 1. A different currency keeps whatever the
+ * user typed, or null — analytics exclude a null rather than guessing one.
+ */
+function resolveRate(
+  currency: string,
+  baseCurrency: string,
+  supplied: number | undefined,
+): number | null {
+  if (currency.toUpperCase() === baseCurrency.toUpperCase()) return 1;
+  return supplied !== undefined && Number.isFinite(supplied) && supplied > 0 ? supplied : null;
 }
 
 /** Validate tenant ownership of every referenced record, then persist atomically. */
@@ -66,6 +86,8 @@ export async function createQuotation({
   userId,
   input,
   numberPrefix,
+  baseCurrency = input.currency,
+  defaultRequireSignature = false,
   ai = null,
 }: CreateArgs): Promise<QuotationWithRelations> {
   const customer = await prisma.customer.findFirst({
@@ -92,6 +114,14 @@ export async function createQuotation({
     }
   }
 
+  if (input.templateId) {
+    const template = await prisma.quotationTemplate.findFirst({
+      where: { id: input.templateId, organizationId },
+      select: { id: true },
+    });
+    if (!template) throw new NotFoundError("That template does not exist in your workspace.");
+  }
+
   const totals = computeTotals(input.items, input.discountCents);
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -114,6 +144,10 @@ export async function createQuotation({
           notes: input.notes ?? null,
           terms: input.terms ?? null,
           validUntil: input.validUntil ?? null,
+          requireSignature: input.requireSignature ?? defaultRequireSignature,
+          templateId: input.templateId ?? null,
+          baseCurrency,
+          exchangeRateToBase: resolveRate(input.currency, baseCurrency, input.exchangeRateToBase),
           aiGenerated: Boolean(ai),
           aiModel: ai?.model ?? null,
           items: {
@@ -145,6 +179,7 @@ export async function updateQuotation(
   organizationId: string,
   quotationId: string,
   input: QuotationInput,
+  options: { baseCurrency?: string } = {},
 ): Promise<QuotationWithRelations> {
   const existing = await prisma.quotation.findFirst({
     where: { id: quotationId, organizationId },
@@ -164,6 +199,17 @@ export async function updateQuotation(
   });
   if (!customer) throw new NotFoundError("That customer does not exist in your workspace.");
 
+  const productIds = [...new Set(input.items.map((i) => i.productId).filter(Boolean))] as string[];
+  if (productIds.length > 0) {
+    const owned = await prisma.product.count({
+      where: { id: { in: productIds }, organizationId },
+    });
+    if (owned !== productIds.length) {
+      throw new NotFoundError("One or more line items reference a product outside your workspace.");
+    }
+  }
+
+  const baseCurrency = options.baseCurrency ?? input.currency;
   const totals = computeTotals(input.items, input.discountCents);
 
   return prisma.$transaction(async (tx) => {
@@ -182,6 +228,9 @@ export async function updateQuotation(
         notes: input.notes ?? null,
         terms: input.terms ?? null,
         validUntil: input.validUntil ?? null,
+        requireSignature: input.requireSignature ?? false,
+        baseCurrency,
+        exchangeRateToBase: resolveRate(input.currency, baseCurrency, input.exchangeRateToBase),
         items: {
           create: input.items.map((item, index) => ({
             productId: item.productId ?? null,

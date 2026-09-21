@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { isAiConfigured, isBillingConfigured } from "@/lib/env";
+import { describeEnvironment } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,12 +14,24 @@ export async function GET() {
     database = "down";
   }
 
+  const environment = describeEnvironment();
+
   return NextResponse.json(
     {
       status: database === "up" ? "ok" : "degraded",
       database,
-      integrations: { ai: isAiConfigured(), billing: isBillingConfigured() },
+      nodeEnv: environment.nodeEnv,
+      integrations: {
+        ai: environment.ai,
+        billing: environment.billing,
+        cron: environment.cron,
+        publicPages: environment.publicPages,
+      },
+      warnings: environment.warnings,
     },
-    { status: database === "up" ? 200 : 503 },
+    {
+      status: database === "up" ? 200 : 503,
+      headers: { "cache-control": "no-store" },
+    },
   );
 }

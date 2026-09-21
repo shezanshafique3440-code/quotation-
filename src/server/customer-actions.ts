@@ -8,6 +8,7 @@ import {
   toActionState,
   type ActionState,
 } from "@/lib/action-state";
+import { ACTIVITY_KINDS, recordActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { NotFoundError } from "@/lib/errors";
 import { text } from "@/lib/form";
@@ -40,6 +41,17 @@ export async function createCustomerAction(
       data: { organizationId: session.organizationId, ...parsed.data },
     });
 
+    await recordActivity({
+      organizationId: session.organizationId,
+      category: "customer",
+      kind: ACTIVITY_KINDS.customerCreated,
+      summary: `${session.user.name} added ${customer.name}`,
+      actorType: "user",
+      actorId: session.userId,
+      actorLabel: session.user.name,
+      customerId: customer.id,
+    });
+
     revalidatePath("/customers");
     revalidatePath("/inquiries");
     return successState(`${customer.name} added.`, { id: customer.id });
@@ -68,6 +80,17 @@ export async function updateCustomerAction(
       data: parsed.data,
     });
     if (result.count === 0) throw new NotFoundError("Customer not found.");
+
+    await recordActivity({
+      organizationId: session.organizationId,
+      category: "customer",
+      kind: ACTIVITY_KINDS.customerUpdated,
+      summary: `${session.user.name} updated ${parsed.data.name}`,
+      actorType: "user",
+      actorId: session.userId,
+      actorLabel: session.user.name,
+      customerId: id,
+    });
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${id}`);

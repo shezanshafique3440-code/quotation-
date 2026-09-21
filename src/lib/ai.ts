@@ -29,6 +29,15 @@ const draftSchema = z.object({
 
 export type AiDraft = z.infer<typeof draftSchema>;
 
+/** Follow-up drafting returns prose only — no prices, no commitments. */
+const followUpSchema = z.object({
+  whatsapp_message: z.string(),
+  email_subject: z.string(),
+  email_body: z.string(),
+});
+
+export type AiFollowUp = z.infer<typeof followUpSchema>;
+
 export interface CatalogEntry {
   id: string;
   name: string;
@@ -104,6 +113,65 @@ function buildUserPrompt(request: DraftRequest): string {
     .join("\n");
 }
 
+const FOLLOW_UP_SYSTEM_PROMPT = `You write short follow-up messages for a small business chasing a quotation it already sent. A human reads and sends every message you write — you are not sending anything.
+
+Rules:
+- Never state a price, total, discount or date that is not in the supplied context. Do not recalculate or "round" any figure.
+- Never offer a discount, extension or any other concession. Only the business owner can decide that.
+- Never claim anything has happened that is not in the context: do not say you called, emailed, reserved stock, held a slot, or that a colleague will be in touch.
+- Be brief and human. WhatsApp under 500 characters, email body under 900.
+- Open a door rather than applying pressure: invite a question, an objection, or a yes/no.
+- Match the language the quotation's notes and title are written in.
+- If the context says the customer has not opened the quote, do not say "I know you have seen it".`;
+
+export interface FollowUpRequest {
+  business: { legalName: string; senderName: string };
+  customer: { name: string; company: string | null };
+  quotation: {
+    number: string;
+    title: string;
+    totalFormatted: string;
+    status: string;
+    sentAgoDays: number | null;
+    validUntilFormatted: string | null;
+    viewCount: number;
+    everViewed: boolean;
+    notes: string | null;
+  };
+  /** How many chases have already gone out, so the tone can escalate gently. */
+  previousFollowUps: number;
+  instructions?: string | undefined;
+}
+
+export interface FollowUpResult {
+  draft: AiFollowUp;
+  model: string;
+  usage: { inputTokens: number; outputTokens: number };
+}
+
+function buildFollowUpPrompt(request: FollowUpRequest): string {
+  const q = request.quotation;
+  return [
+    `Business: ${request.business.legalName}`,
+    `Message is from: ${request.business.senderName}`,
+    `Customer: ${request.customer.name}${request.customer.company ? ` — ${request.customer.company}` : ""}`,
+    "",
+    `Quotation ${q.number}: ${q.title}`,
+    `Total (already agreed wording, quote it exactly if you mention it): ${q.totalFormatted}`,
+    `Current status: ${q.status}`,
+    q.sentAgoDays === null ? "Sent: unknown" : `Sent ${q.sentAgoDays} day(s) ago`,
+    q.validUntilFormatted ? `Valid until: ${q.validUntilFormatted}` : "No validity date set",
+    q.everViewed
+      ? `The customer has opened the quote ${q.viewCount} time(s).`
+      : "The customer has not opened the quote yet.",
+    q.notes ? `Notes shown to the customer: ${q.notes}` : "",
+    `Previous follow-ups already sent: ${request.previousFollowUps}`,
+    request.instructions ? `\nExtra instruction from the owner:\n${request.instructions}` : "",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
 let client: Anthropic | null = null;
 
 function getClient(): Anthropic {
@@ -159,6 +227,62 @@ export async function generateQuotationDraft(request: DraftRequest): Promise<Dra
       "The AI assistant returned a draft that could not be read. Please try again.",
       { status: 502, code: "ai_unparseable" },
     );
+  }
+
+  return {
+    draft: parsed,
+    model: response.model,
+    usage: {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
+  };
+}
+
+/**
+ * Draft a follow-up message for a quotation that has gone quiet.
+ *
+ * Returns text only. QuoteFlow has no outbound sender, so nothing is
+ * delivered — the owner copies the draft and sends it themselves.
+ */
+export async function generateFollowUpMessage(
+  request: FollowUpRequest,
+): Promise<FollowUpResult> {
+  const env = getEnv();
+  const anthropic = getClient();
+
+  let response;
+  try {
+    response = await anthropic.messages.parse({
+      model: env.AI_MODEL,
+      max_tokens: Math.min(env.AI_MAX_OUTPUT_TOKENS, 2000),
+      system: FOLLOW_UP_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildFollowUpPrompt(request) }],
+      output_config: { format: zodOutputFormat(followUpSchema) },
+    });
+  } catch (error) {
+    throw toAppError(error);
+  }
+
+  if (response.stop_reason === "refusal") {
+    throw new AppError(
+      "The AI assistant declined to draft this message. Write the follow-up yourself, or adjust the instruction and retry.",
+      { status: 422, code: "ai_refusal" },
+    );
+  }
+  if (response.stop_reason === "max_tokens") {
+    throw new AppError("The AI draft was cut short. Try again with a shorter instruction.", {
+      status: 502,
+      code: "ai_truncated",
+    });
+  }
+
+  const parsed = response.parsed_output;
+  if (!parsed) {
+    throw new AppError("The AI assistant returned a message that could not be read.", {
+      status: 502,
+      code: "ai_unparseable",
+    });
   }
 
   return {

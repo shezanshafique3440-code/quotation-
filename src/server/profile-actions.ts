@@ -8,6 +8,7 @@ import {
   toActionState,
   type ActionState,
 } from "@/lib/action-state";
+import { ACTIVITY_KINDS, recordActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { percentBp, text } from "@/lib/form";
 import { requireSession } from "@/lib/session";
@@ -39,6 +40,14 @@ export async function updateBusinessProfileAction(
       defaultValidityDays: text(formData, "defaultValidityDays"),
       defaultTerms: text(formData, "defaultTerms"),
       defaultNotes: text(formData, "defaultNotes"),
+      timezone: text(formData, "timezone"),
+      brandColor: text(formData, "brandColor"),
+      portalHeadline: text(formData, "portalHeadline"),
+      portalMessage: text(formData, "portalMessage"),
+      publicPagesEnabled: formData.get("publicPagesEnabled") === "on",
+      requireSignature: formData.get("requireSignature") === "on",
+      autoFollowUpEnabled: formData.get("autoFollowUpEnabled") === "on",
+      autoFollowUpDays: text(formData, "autoFollowUpDays"),
     });
     if (!parsed.success) {
       return errorState("Please fix the highlighted fields.", fieldErrors(parsed.error));
@@ -59,6 +68,8 @@ export async function updateBusinessProfileAction(
       logoUrl: parsed.data.logoUrl ?? null,
       defaultTerms: parsed.data.defaultTerms ?? null,
       defaultNotes: parsed.data.defaultNotes ?? null,
+      portalHeadline: parsed.data.portalHeadline ?? null,
+      portalMessage: parsed.data.portalMessage ?? null,
     };
 
     await prisma.$transaction([
@@ -73,8 +84,24 @@ export async function updateBusinessProfileAction(
       }),
     ]);
 
+    await recordActivity({
+      organizationId: session.organizationId,
+      category: "settings",
+      kind: ACTIVITY_KINDS.profileUpdated,
+      summary: `${session.user.name} updated the business profile`,
+      actorType: "user",
+      actorId: session.userId,
+      actorLabel: session.user.name,
+      metadata: {
+        currency: parsed.data.currency,
+        timezone: parsed.data.timezone,
+        publicPagesEnabled: parsed.data.publicPagesEnabled,
+      },
+    });
+
     revalidatePath("/settings/business");
     revalidatePath("/dashboard");
+    revalidatePath("/quotations");
     return successState("Business profile saved.");
   } catch (error) {
     if (isFrameworkError(error)) throw error;

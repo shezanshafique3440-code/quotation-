@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert, Field } from "@/components/ui";
 import { idleState } from "@/lib/action-state";
+import { CURRENCIES } from "@/lib/currency";
 import { updateBusinessProfileAction } from "@/server/profile-actions";
 
 export interface ProfileValues {
@@ -26,9 +27,23 @@ export interface ProfileValues {
   defaultValidityDays: string;
   defaultTerms: string;
   defaultNotes: string;
+  timezone: string;
+  brandColor: string;
+  portalHeadline: string;
+  portalMessage: string;
+  publicPagesEnabled: boolean;
+  requireSignature: boolean;
+  autoFollowUpEnabled: boolean;
+  autoFollowUpDays: string;
 }
 
-export function BusinessProfileForm({ values }: { values: ProfileValues }) {
+export function BusinessProfileForm({
+  values,
+  timeZones,
+}: {
+  values: ProfileValues;
+  timeZones: string[];
+}) {
   const [state, action] = useActionState(updateBusinessProfileAction, idleState);
   const errors = state.fieldErrors ?? {};
 
@@ -127,22 +142,151 @@ export function BusinessProfileForm({ values }: { values: ProfileValues }) {
       </div>
 
       <div className="space-y-4">
+        <h3 className="text-sm font-semibold">Regional settings</h3>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Timezone"
+            htmlFor="timezone"
+            error={errors.timezone}
+            hint="Every date shown, and every expiry deadline, is resolved in this zone."
+          >
+            <select id="timezone" name="timezone" className="input" defaultValue={values.timezone}>
+              {timeZones.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label="Brand colour"
+            htmlFor="brandColor"
+            error={errors.brandColor}
+            hint="Used on your shared quotation pages, the customer portal and the PDF accent."
+          >
+            <div className="flex gap-2">
+              <input
+                id="brandColor"
+                name="brandColor"
+                className="input font-mono"
+                maxLength={7}
+                defaultValue={values.brandColor}
+                aria-describedby="brandColorSwatch"
+              />
+              <span
+                id="brandColorSwatch"
+                aria-hidden
+                className="size-9 shrink-0 rounded-lg border border-[var(--color-line)]"
+                style={{ background: values.brandColor }}
+              />
+            </div>
+          </Field>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-semibold">Quote-to-close</h3>
+        <div className="space-y-3">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="publicPagesEnabled"
+              defaultChecked={values.publicPagesEnabled}
+              className="mt-0.5 size-4 rounded border-[var(--color-line)]"
+            />
+            <span>
+              Allow shareable quotation pages
+              <span className="block text-xs text-[var(--color-ink-subtle)]">
+                Turning this off immediately makes every existing share link unavailable.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="requireSignature"
+              defaultChecked={values.requireSignature}
+              className="mt-0.5 size-4 rounded border-[var(--color-line)]"
+            />
+            <span>
+              Require a typed signature to accept
+              <span className="block text-xs text-[var(--color-ink-subtle)]">
+                The default for new quotations. Each quotation can override it.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="autoFollowUpEnabled"
+              defaultChecked={values.autoFollowUpEnabled}
+              className="mt-0.5 size-4 rounded border-[var(--color-line)]"
+            />
+            <span>
+              Schedule a follow-up automatically when a quotation is sent
+              <span className="block text-xs text-[var(--color-ink-subtle)]">
+                The reminder appears in Follow-ups. QuoteFlow never sends it for you.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <Field
+          label="Follow up after (days)"
+          htmlFor="autoFollowUpDays"
+          error={errors.autoFollowUpDays}
+        >
+          <input
+            id="autoFollowUpDays"
+            name="autoFollowUpDays"
+            className="input tabular-nums sm:max-w-40"
+            inputMode="numeric"
+            required
+            defaultValue={values.autoFollowUpDays}
+          />
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Portal headline" htmlFor="portalHeadline" error={errors.portalHeadline}>
+            <input
+              id="portalHeadline"
+              name="portalHeadline"
+              className="input"
+              maxLength={120}
+              defaultValue={values.portalHeadline}
+              placeholder="Your quotations"
+            />
+          </Field>
+          <Field label="Portal message" htmlFor="portalMessage" error={errors.portalMessage}>
+            <textarea
+              id="portalMessage"
+              name="portalMessage"
+              className="input min-h-20"
+              maxLength={2000}
+              defaultValue={values.portalMessage}
+            />
+          </Field>
+        </div>
+      </div>
+
+      <div className="space-y-4">
         <h3 className="text-sm font-semibold">Quotation defaults</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field
             label="Currency"
             htmlFor="currency"
             error={errors.currency}
-            hint="ISO code, e.g. USD"
+            hint="Used for new quotations and for reporting."
           >
-            <input
-              id="currency"
-              name="currency"
-              className="input uppercase"
-              maxLength={3}
-              required
-              defaultValue={values.currency}
-            />
+            <select id="currency" name="currency" className="input" defaultValue={values.currency}>
+              {CURRENCIES.map((currency) => (
+                <option key={currency.code} value={currency.code}>
+                  {currency.code} — {currency.name}
+                </option>
+              ))}
+            </select>
           </Field>
           <Field label="Locale" htmlFor="locale" error={errors.locale} hint="e.g. en-GB, es-MX">
             <input id="locale" name="locale" className="input" defaultValue={values.locale} />

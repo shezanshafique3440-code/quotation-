@@ -223,3 +223,157 @@ describe("getQuotation", () => {
     await expect(getQuotation(mine.organizationId, created.id)).rejects.toThrow(NotFoundError);
   });
 });
+
+describe("multi-currency and signature fields", () => {
+  it("records a rate of exactly 1 when the quote is in the reporting currency", async () => {
+    const workspace = await createWorkspace();
+    const quotation = await createQuotation({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      input: quotationInput(workspace, { currency: "USD" }),
+      numberPrefix: "QT",
+      baseCurrency: "USD",
+    });
+
+    expect(quotation.baseCurrency).toBe("USD");
+    expect(quotation.exchangeRateToBase).toBe(1);
+  });
+
+  it("keeps the supplied rate for a foreign-currency quote", async () => {
+    const workspace = await createWorkspace();
+    const quotation = await createQuotation({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      input: quotationInput(workspace, {
+        currency: "EUR",
+        exchangeRateToBase: 1.08,
+        items: [
+          { description: "Work", quantity: 1, unit: "unit", unitPriceCents: 10_000, taxRateBp: 0 },
+        ],
+      }),
+      numberPrefix: "QT",
+      baseCurrency: "USD",
+    });
+
+    expect(quotation.currency).toBe("EUR");
+    expect(quotation.exchangeRateToBase).toBe(1.08);
+  });
+
+  it("stores null rather than guessing when a foreign quote has no rate", async () => {
+    const workspace = await createWorkspace();
+    for (const rate of [undefined, 0, -1]) {
+      const quotation = await createQuotation({
+        organizationId: workspace.organizationId,
+        userId: workspace.userId,
+        input: quotationInput(workspace, {
+          currency: "JPY",
+          ...(rate === undefined ? {} : { exchangeRateToBase: rate }),
+          items: [
+            { description: "Work", quantity: 1, unit: "unit", unitPriceCents: 1000, taxRateBp: 0 },
+          ],
+        }),
+        numberPrefix: "QT",
+        baseCurrency: "USD",
+      });
+      expect(quotation.exchangeRateToBase).toBeNull();
+    }
+  });
+
+  it("applies the workspace signature default and lets the quotation override it", async () => {
+    const workspace = await createWorkspace();
+
+    const inherited = await createQuotation({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      input: quotationInput(workspace),
+      numberPrefix: "QT",
+      defaultRequireSignature: true,
+    });
+    expect(inherited.requireSignature).toBe(true);
+
+    const overridden = await createQuotation({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      input: quotationInput(workspace, { requireSignature: false }),
+      numberPrefix: "QT",
+      defaultRequireSignature: true,
+    });
+    expect(overridden.requireSignature).toBe(false);
+  });
+
+  it("refuses a template from another workspace", async () => {
+    const mine = await createWorkspace();
+    const theirs = await createWorkspace();
+    const { createTemplate } = await import("@/lib/templates");
+
+    const template = await createTemplate(theirs.organizationId, {
+      name: "Theirs",
+      validityDays: 14,
+      requireSignature: false,
+      isDefault: false,
+      items: [
+        { description: "Line", quantity: 1, unit: "unit", unitPriceCents: 100, taxRateBp: 0 },
+      ],
+    });
+
+    await expect(
+      createQuotation({
+        organizationId: mine.organizationId,
+        userId: mine.userId,
+        input: quotationInput(mine, { templateId: template.id }),
+        numberPrefix: "QT",
+      }),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("re-checks product ownership on update, not only on create", async () => {
+    const mine = await createWorkspace();
+    const theirs = await createWorkspace();
+    const created = await createQuotation({
+      organizationId: mine.organizationId,
+      userId: mine.userId,
+      input: quotationInput(mine),
+      numberPrefix: "QT",
+    });
+
+    await expect(
+      updateQuotation(
+        mine.organizationId,
+        created.id,
+        quotationInput(mine, {
+          items: [
+            {
+              productId: theirs.productId,
+              description: "Borrowed",
+              quantity: 1,
+              unit: "unit",
+              unitPriceCents: 100,
+              taxRateBp: 0,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it("prices a zero-decimal currency without inflating the total", async () => {
+    const workspace = await createWorkspace();
+    const quotation = await createQuotation({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      input: quotationInput(workspace, {
+        currency: "JPY",
+        items: [
+          { description: "Work", quantity: 3, unit: "unit", unitPriceCents: 12_000, taxRateBp: 1000 },
+        ],
+      }),
+      numberPrefix: "QT",
+      baseCurrency: "JPY",
+    });
+
+    // 3 × ¥12,000 = ¥36,000, plus 10% tax = ¥39,600 — all in whole yen.
+    expect(quotation.subtotalCents).toBe(36_000);
+    expect(quotation.taxCents).toBe(3_600);
+    expect(quotation.totalCents).toBe(39_600);
+  });
+});

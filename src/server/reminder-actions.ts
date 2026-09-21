@@ -8,6 +8,7 @@ import {
   toActionState,
   type ActionState,
 } from "@/lib/action-state";
+import { ACTIVITY_KINDS, recordActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { AppError, NotFoundError } from "@/lib/errors";
 import { optionalDate, text } from "@/lib/form";
@@ -32,7 +33,7 @@ export async function createReminderAction(
 
     const quotation = await prisma.quotation.findFirst({
       where: { id: parsed.data.quotationId, organizationId: session.organizationId },
-      select: { id: true },
+      select: { id: true, number: true, customerId: true },
     });
     if (!quotation) throw new NotFoundError("Quotation not found.");
 
@@ -44,6 +45,19 @@ export async function createReminderAction(
         dueAt: parsed.data.dueAt,
         note: parsed.data.note ?? null,
       },
+    });
+
+    await recordActivity({
+      organizationId: session.organizationId,
+      category: "quotation",
+      kind: ACTIVITY_KINDS.followUpScheduled,
+      summary: `${session.user.name} scheduled a follow-up for ${quotation.number}`,
+      actorType: "user",
+      actorId: session.userId,
+      actorLabel: session.user.name,
+      quotationId: quotation.id,
+      customerId: quotation.customerId,
+      metadata: { dueAt: parsed.data.dueAt.toISOString(), automatic: false },
     });
 
     revalidatePath("/reminders");
@@ -67,7 +81,12 @@ async function setReminderStatus(
 
   const reminder = await prisma.reminder.findFirst({
     where: { id, organizationId: session.organizationId },
-    select: { id: true, status: true, quotationId: true },
+    select: {
+      id: true,
+      status: true,
+      quotationId: true,
+      quotation: { select: { number: true, customerId: true } },
+    },
   });
   if (!reminder) throw new NotFoundError("Reminder not found.");
   if (reminder.status !== "pending") {
@@ -77,6 +96,19 @@ async function setReminderStatus(
   await prisma.reminder.update({
     where: { id },
     data: { status, completedAt: status === "done" ? new Date() : null },
+  });
+
+  await recordActivity({
+    organizationId: session.organizationId,
+    category: "quotation",
+    kind:
+      status === "done" ? ACTIVITY_KINDS.followUpCompleted : ACTIVITY_KINDS.followUpCancelled,
+    summary: `${session.user.name} marked a follow-up on ${reminder.quotation.number} as ${status}`,
+    actorType: "user",
+    actorId: session.userId,
+    actorLabel: session.user.name,
+    quotationId: reminder.quotationId,
+    customerId: reminder.quotation.customerId,
   });
 
   revalidatePath("/reminders");

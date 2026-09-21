@@ -1,3 +1,4 @@
+import { minorUnitDigits, minorUnitFactor } from "./currency";
 import { AppError } from "./errors";
 
 export interface LineInput {
@@ -72,8 +73,14 @@ export function computeTotals(lines: LineInput[], discountCents = 0): QuotationT
   };
 }
 
-/** Parse user-entered money ("1,234.50") into integer cents. */
-export function parseAmountToCents(input: string | number): number {
+/**
+ * Parse user-entered money ("1,234.50") into integer minor units.
+ *
+ * The scale comes from the currency: "1000" is 100000 minor units in USD but
+ * 1000 in JPY. Defaults to 2 digits when no currency is supplied, which keeps
+ * the plain two-argument callers correct.
+ */
+export function parseAmountToCents(input: string | number, currency = "USD"): number {
   const raw = typeof input === "number" ? String(input) : input.trim().replace(/,/g, "");
   if (raw === "" || !/^-?\d*(\.\d+)?$/.test(raw)) {
     throw new AppError(`"${input}" is not a valid amount.`);
@@ -82,25 +89,48 @@ export function parseAmountToCents(input: string | number): number {
   if (!Number.isFinite(value)) {
     throw new AppError(`"${input}" is not a valid amount.`);
   }
-  return roundCents(value * 100);
+  return roundCents(value * minorUnitFactor(currency));
 }
 
 export function formatMoney(cents: number, currency: string, locale = "en-US"): string {
+  const digits = minorUnitDigits(currency);
+  const major = cents / 10 ** digits;
   try {
     return new Intl.NumberFormat(locale, {
       style: "currency",
       currency,
-      minimumFractionDigits: 2,
-    }).format(cents / 100);
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(major);
   } catch {
     // Unknown currency code — fall back to a plain, unambiguous rendering.
-    return `${currency} ${(cents / 100).toFixed(2)}`;
+    return `${currency} ${major.toFixed(digits)}`;
   }
 }
 
 /** Currency-symbol-free rendering, used inside the generated PDF. */
-export function formatDecimal(cents: number): string {
-  return (cents / 100).toFixed(2);
+export function formatDecimal(cents: number, currency = "USD"): string {
+  const digits = minorUnitDigits(currency);
+  return (cents / 10 ** digits).toFixed(digits);
+}
+
+/**
+ * Convert an amount into the organization's reporting currency.
+ *
+ * Returns null when no rate was recorded, so callers report "not converted"
+ * instead of inventing a number.
+ */
+export function convertToBase(
+  cents: number,
+  currency: string,
+  baseCurrency: string,
+  rate: number | null | undefined,
+): number | null {
+  if (currency.toUpperCase() === baseCurrency.toUpperCase()) return cents;
+  if (rate === null || rate === undefined || !Number.isFinite(rate) || rate <= 0) return null;
+
+  const major = cents / 10 ** minorUnitDigits(currency);
+  return roundCents(major * rate * 10 ** minorUnitDigits(baseCurrency));
 }
 
 export function formatBp(bp: number): string {

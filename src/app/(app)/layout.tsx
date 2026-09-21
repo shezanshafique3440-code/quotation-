@@ -7,6 +7,18 @@ import { PLAN_LABELS } from "@/lib/plans";
 import { getSession } from "@/lib/session";
 import { signOutAction } from "@/server/auth-actions";
 
+/**
+ * Loading skeletons live on individual leaf routes, never on this group and
+ * never on a segment that has dynamic children.
+ *
+ * A `loading.tsx` makes Next stream the response, which commits the HTTP
+ * status before the page component runs — so a `notFound()` raised by a
+ * tenant-ownership check would render the 404 page with a 200 status. The
+ * boundary also covers every nested segment, so a skeleton on `/quotations`
+ * would silently do the same to `/quotations/[id]`. Routes that can 404
+ * (`quotations`, `customers`, `inquiries` and their children) are therefore
+ * left un-streamed; the heavier leaf routes keep their skeletons.
+ */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
   if (!session) redirect("/sign-in");
@@ -28,9 +40,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     { href: "/quotations", label: "Quotations" },
     { href: "/customers", label: "Customers" },
     { href: "/products", label: "Catalog" },
+    { href: "/templates", label: "Templates" },
     { href: "/reminders", label: "Follow-ups", badge: dueReminders },
+    { href: "/analytics", label: "Analytics" },
     { href: "/settings/business", label: "Business profile" },
     { href: "/settings/billing", label: "Plan & usage" },
+    { href: "/settings/audit", label: "Audit log" },
   ];
 
   const planLabel = PLAN_LABELS[session.organization.plan === "pro" ? "pro" : "free"];

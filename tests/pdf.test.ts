@@ -104,3 +104,63 @@ describe("renderQuotationPdf", () => {
     expect(Buffer.from(pdf.slice(0, 5)).toString()).toBe("%PDF-");
   });
 });
+
+describe("branding and acceptance record", () => {
+  it("renders with a tenant brand colour without breaking the document", async () => {
+    const workspace = await createWorkspace();
+    const quotation = await quotationFor(workspace);
+
+    for (const brandColor of ["#0ca30c", "#fab219", "not-a-colour", null]) {
+      const pdf = await renderQuotationPdf(quotation, { ...business, brandColor });
+      expect(Buffer.from(pdf.slice(0, 5)).toString()).toBe("%PDF-");
+      expect(pdf.byteLength).toBeGreaterThan(1_000);
+    }
+  });
+
+  it("prints nothing about acceptance while the quotation is unanswered", async () => {
+    const workspace = await createWorkspace();
+    const quotation = await quotationFor(workspace);
+
+    expect(quotation.respondedAt).toBeNull();
+    const pdf = await renderQuotationPdf(quotation, business);
+    // No empty signature line implying consent that was never given.
+    expect((await PDFDocument.load(pdf)).getPageCount()).toBe(1);
+  });
+
+  it("prints the acceptance and signature once the customer has responded", async () => {
+    const { prisma } = await import("@/lib/db");
+    const { getQuotation } = await import("@/lib/quotations");
+
+    const workspace = await createWorkspace();
+    const created = await quotationFor(workspace);
+    await prisma.quotation.update({
+      where: { id: created.id },
+      data: {
+        status: "accepted",
+        respondedAt: new Date("2026-04-02T10:00:00Z"),
+        respondedByName: "Dana Whitfield",
+        decisionSource: "public_page",
+        signatureName: "Dana Whitfield",
+        signatureEmail: "dana@example.test",
+        signedAt: new Date("2026-04-02T10:00:00Z"),
+      },
+    });
+
+    const accepted = await getQuotation(workspace.organizationId, created.id);
+    const pdf = await renderQuotationPdf(accepted, business);
+    expect(Buffer.from(pdf.slice(0, 5)).toString()).toBe("%PDF-");
+  });
+
+  it("renders a zero-decimal currency without a fractional part", async () => {
+    const { prisma } = await import("@/lib/db");
+    const { getQuotation } = await import("@/lib/quotations");
+
+    const workspace = await createWorkspace();
+    const created = await quotationFor(workspace);
+    await prisma.quotation.update({ where: { id: created.id }, data: { currency: "JPY" } });
+
+    const yen = await getQuotation(workspace.organizationId, created.id);
+    const pdf = await renderQuotationPdf(yen, business);
+    expect(Buffer.from(pdf.slice(0, 5)).toString()).toBe("%PDF-");
+  });
+});

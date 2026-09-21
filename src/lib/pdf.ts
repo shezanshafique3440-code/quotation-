@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { hexToUnitRgb } from "./branding";
 import { formatBp, formatDecimal } from "./money";
 import type { QuotationWithRelations } from "./quotations";
 
@@ -7,7 +8,6 @@ const MARGIN = 48;
 const INK = rgb(0.09, 0.1, 0.13);
 const MUTED = rgb(0.42, 0.45, 0.5);
 const RULE = rgb(0.85, 0.87, 0.9);
-const ACCENT = rgb(0.16, 0.36, 0.86);
 
 export interface PdfBusiness {
   legalName: string;
@@ -21,6 +21,8 @@ export interface PdfBusiness {
   country?: string | null;
   taxId?: string | null;
   locale: string;
+  /** Workspace brand colour, used for the document accent. */
+  brandColor?: string | null;
 }
 
 /**
@@ -114,6 +116,8 @@ export async function renderQuotationPdf(
   quotation: QuotationWithRelations,
   business: PdfBusiness,
 ): Promise<Uint8Array> {
+  const brand = hexToUnitRgb(business.brandColor ?? "#4B3DDB");
+  const ACCENT = rgb(brand.r, brand.g, brand.b);
   const doc = await PDFDocument.create();
   doc.setTitle(`Quotation ${quotation.number}`);
   doc.setSubject(quotation.title);
@@ -222,9 +226,9 @@ export async function renderQuotationPdf(
     const qty = Number.isInteger(item.quantity) ? String(item.quantity) : item.quantity.toFixed(2);
     drawText(ctx, descLines[0] ?? "", cols.description.x, 10);
     drawText(ctx, `${qty} ${item.unit}`, cols.qty.x, 10, { align: "right", width: cols.qty.width });
-    drawText(ctx, formatDecimal(item.unitPriceCents), cols.price.x, 10, { align: "right", width: cols.price.width });
+    drawText(ctx, formatDecimal(item.unitPriceCents, quotation.currency), cols.price.x, 10, { align: "right", width: cols.price.width });
     drawText(ctx, formatBp(item.taxRateBp), cols.tax.x, 10, { align: "right", width: cols.tax.width, color: MUTED });
-    drawText(ctx, formatDecimal(item.lineTotalCents), cols.total.x, 10, { align: "right", width: cols.total.width });
+    drawText(ctx, formatDecimal(item.lineTotalCents, quotation.currency), cols.total.x, 10, { align: "right", width: cols.total.width });
     ctx.y -= 13;
 
     for (const extra of descLines.slice(1)) {
@@ -251,10 +255,45 @@ export async function renderQuotationPdf(
     ctx.y -= bold ? 20 : 15;
   };
 
-  totalRow("Subtotal", formatDecimal(quotation.subtotalCents));
-  if (quotation.discountCents > 0) totalRow("Discount", `-${formatDecimal(quotation.discountCents)}`);
-  if (quotation.taxCents > 0) totalRow("Tax", formatDecimal(quotation.taxCents));
-  totalRow(`Total (${quotation.currency})`, formatDecimal(quotation.totalCents), true, 13);
+  const amount = (cents: number) => formatDecimal(cents, quotation.currency);
+  totalRow("Subtotal", amount(quotation.subtotalCents));
+  if (quotation.discountCents > 0) totalRow("Discount", `-${amount(quotation.discountCents)}`);
+  if (quotation.taxCents > 0) totalRow("Tax", amount(quotation.taxCents));
+  totalRow(`Total (${quotation.currency})`, amount(quotation.totalCents), true, 13);
+
+  // --- Acceptance record --------------------------------------------------
+  // Printed only when the customer actually responded; an unanswered quote
+  // shows nothing here rather than an empty signature line implying consent.
+  if (quotation.respondedAt && (quotation.status === "accepted" || quotation.status === "rejected")) {
+    ensureSpace(ctx, 92);
+    ctx.y -= 16;
+
+    const accepted = quotation.status === "accepted";
+    drawText(ctx, accepted ? "ACCEPTED" : "DECLINED", MARGIN, 9, {
+      bold: true,
+      color: accepted ? ACCENT : MUTED,
+    });
+    ctx.y -= 15;
+
+    const record: string[] = [];
+    if (quotation.respondedByName) record.push(`By: ${quotation.respondedByName}`);
+    record.push(`On: ${formatDate(quotation.respondedAt, business.locale)}`);
+    if (quotation.decisionSource === "public_page") record.push("Via: online quote page");
+    if (accepted && quotation.signatureName) {
+      record.push(`Signed: ${quotation.signatureName} (typed electronic signature)`);
+      if (quotation.signatureEmail) record.push(`Signer email: ${quotation.signatureEmail}`);
+    }
+    if (!accepted && quotation.rejectionReason) {
+      record.push(`Reason: ${quotation.rejectionReason}`);
+    }
+
+    for (const line of record) {
+      for (const wrapped of wrap(line, ctx.regular, 9, contentWidth)) {
+        drawText(ctx, wrapped, MARGIN, 9);
+        ctx.y -= 12;
+      }
+    }
+  }
 
   // --- Notes and terms ----------------------------------------------------
   for (const [heading, body] of [
