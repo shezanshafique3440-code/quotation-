@@ -18,6 +18,6 @@ export async function register(): Promise<void> {
     console.warn(`[env] ${warning}`);
   }
   console.info(
-    `[env] ${report.nodeEnv} · ai=${report.ai} billing=${report.billing} cron=${report.cron} publicPages=${report.publicPages}`,
+    `[env] ${report.nodeEnv} · ai=${report.ai} billing=${report.billing} email=${report.email} cron=${report.cron} publicPages=${report.publicPages}`,
   );
 }

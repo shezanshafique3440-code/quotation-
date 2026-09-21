@@ -44,6 +44,10 @@ export async function updateBusinessProfileAction(
       brandColor: text(formData, "brandColor"),
       portalHeadline: text(formData, "portalHeadline"),
       portalMessage: text(formData, "portalMessage"),
+      notifyEmail: text(formData, "notifyEmail"),
+      notifyOnView: formData.get("notifyOnView") === "on",
+      notifyOnDecision: formData.get("notifyOnDecision") === "on",
+      notifyFollowUpsDue: formData.get("notifyFollowUpsDue") === "on",
       publicPagesEnabled: formData.get("publicPagesEnabled") === "on",
       requireSignature: formData.get("requireSignature") === "on",
       autoFollowUpEnabled: formData.get("autoFollowUpEnabled") === "on",
@@ -70,6 +74,7 @@ export async function updateBusinessProfileAction(
       defaultNotes: parsed.data.defaultNotes ?? null,
       portalHeadline: parsed.data.portalHeadline ?? null,
       portalMessage: parsed.data.portalMessage ?? null,
+      notifyEmail: parsed.data.notifyEmail ?? null,
     };
 
     await prisma.$transaction([

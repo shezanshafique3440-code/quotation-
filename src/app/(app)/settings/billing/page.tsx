@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ConfirmForm } from "@/components/confirm-form";
 import { Alert, Badge, Card, CardHeader, PageHeader } from "@/components/ui";
 import { prisma } from "@/lib/db";
-import { isAiConfigured, isBillingConfigured } from "@/lib/env";
+import { isAiConfigured, isBillingConfigured, isEmailConfigured } from "@/lib/env";
 import { formatDate } from "@/lib/format";
 import { PLAN_LABELS, PLAN_LIMITS } from "@/lib/plans";
 import { requireTenant } from "@/lib/tenant";
@@ -139,6 +139,12 @@ export default async function BillingPage({
             enabled={isAiConfigured()}
             enabledHint="Inquiries can be turned into draft quotations."
             disabledHint="Set AI_PROVIDER and ANTHROPIC_API_KEY to enable."
+          />
+          <IntegrationRow
+            label="Email"
+            enabled={isEmailConfigured()}
+            enabledHint="Quotations can be emailed, and you are notified when customers respond."
+            disabledHint="Set EMAIL_PROVIDER and EMAIL_FROM to enable."
           />
           <IntegrationRow
             label="Payments"

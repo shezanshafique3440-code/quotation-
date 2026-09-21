@@ -21,6 +21,7 @@ Built with Next.js 15 (App Router), TypeScript, Prisma and Tailwind CSS v4.
 | **AI drafts** | Claude turns an inquiry into an editable **draft** quotation. Catalog prices always override what the model wrote. |
 | **Quotations** | Line items, per-line tax, document discount, server-computed totals, per-tenant numbering (`QT-2026-0001`). |
 | **WhatsApp** | Generates the message text and a `wa.me` click-to-chat link. QuoteFlow never sends anything itself. |
+| **Email** | Sends the quotation to the customer, and notifies you when they open or answer it. Resend or any SMTP server; every attempt is recorded with the provider's own id or its error. |
 | **PDF export** | A typeset A4 document with your business details, tax breakdown, notes and terms. |
 | **Status tracking** | `draft → sent → accepted / rejected / expired`, with transitions enforced server-side. |
 | **Shareable quote pages** | A private, branded link per quotation at `/q/<token>`, revocable and replaceable. Never indexed. |
@@ -48,8 +49,15 @@ Built with Next.js 15 (App Router), TypeScript, Prisma and Tailwind CSS v4.
 - **It does not grant Pro from a browser redirect.** The plan changes only when a
   signature-verified Stripe webhook arrives. Returning from Checkout says the
   plan updates once payment is confirmed — nothing more.
-- **It does not claim to deliver reminders.** `/api/cron/reminders` expires stale
-  quotations and *returns* the due follow-ups for an external notifier.
+- **It does not claim an email it did not send.** Every attempt writes an
+  `EmailDelivery` row, and it only reaches `sent` when the provider returned a
+  message id. A failed send is shown with the provider's own words, is written
+  to the timeline, and changes nothing else — emailing a draft marks it as
+  `sent` only if the message was genuinely accepted.
+- **It does not email your customers on your behalf.** The follow-up digest goes
+  to *you*. QuoteFlow contacts a customer only when you press send.
+- **It offers no dead buttons.** With no provider configured, the email panel
+  says email is not set up and points you at the share link instead.
 - **AI prices are not trusted.** Any line referencing a catalog product is
   repriced from the database; lines it cannot validate are dropped and reported.
   The follow-up drafter is instructed never to state a price, offer a discount,
@@ -108,6 +116,31 @@ Everything optional degrades to a *disabled* feature, never a fake one. See
   `claude-opus-5`), `AI_MAX_OUTPUT_TOKENS`.
 - Left at `none`, the app runs fine and quotations are written by hand.
 
+**Outbound email (optional, strongly recommended)**
+
+- `EMAIL_PROVIDER=resend` with `RESEND_API_KEY`, or `EMAIL_PROVIDER=smtp` with
+  `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASSWORD` and
+  `SMTP_SECURE` (`true` for implicit TLS on 465). SMTP auth is omitted when the
+  user and password are blank, so a local relay works too.
+- `EMAIL_FROM` is required whenever a provider is set, and must be a domain you
+  have verified with that provider. `EMAIL_REPLY_TO` is an optional global
+  fallback; a workspace's own business email overrides it.
+- Left at `none`, nothing is sent and the UI says so. Startup logs
+  `email=false`, and a production boot warns that quotations cannot be emailed.
+
+What gets sent, and to whom:
+
+| Message | To | When |
+| --- | --- | --- |
+| Quotation | the customer | you press **Send by email** |
+| Portal link | the customer | you press **Create and email the link** |
+| Accepted / declined | you | the customer responds (on by default) |
+| Opened | you | the customer first opens the page (off by default) |
+| Follow-ups due | you | the cron endpoint runs and something is due |
+
+Per-workspace preferences and the notification address live under **Business
+profile**; the three owner notices can each be turned off there.
+
 **Payments (optional)**
 
 - `BILLING_PROVIDER=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID_PRO`,
@@ -128,9 +161,14 @@ Everything optional degrades to a *disabled* feature, never a fake one. See
 **Scheduled maintenance (optional)**
 
 - `CRON_SECRET` — bearer token for `/api/cron/reminders`. Call it on a schedule
-  (every 15 minutes is plenty). It expires lapsed quotations, prunes rate-limit
-  rows and *returns* the follow-ups now due — it delivers nothing, and the
-  response body says `"delivered": false`.
+  (hourly is plenty). It expires lapsed quotations, prunes rate-limit rows,
+  emails each workspace a digest of its due follow-ups, and returns the due
+  items so an external notifier can use them too.
+- `digestsSent` counts only the digests a provider accepted; anything not sent
+  is listed in `digestsSkipped` with the reason. With no email provider both are
+  empty and the endpoint still does its other work.
+- A due reminder appears in at most one digest a day, so running the endpoint
+  hourly does not mail the same item every hour.
 
 ### Switching to PostgreSQL
 
@@ -244,7 +282,7 @@ Those panels derive their state from the action result instead.
 npm test
 ```
 
-300+ tests across 26 files. Unit tests cover the money engine, the currency
+350+ tests across 29 files. Unit tests cover the money engine, the currency
 registry and its minor units, timezone arithmetic across DST, plan metering,
 validation schemas, password hashing, branding contrast, WhatsApp rendering,
 form parsing, request/bot classification and the AI-draft mapping.
@@ -253,8 +291,9 @@ Integration tests run against a real SQLite database created from the Prisma
 schema and cover registration, authentication, sessions, quotation numbering,
 tenant isolation, usage limits, Stripe webhook handling, PDF generation, the
 share-link lifecycle, customer responses and signatures, portal links, template
-CRUD, automatic follow-ups, quote expiry, rate limiting, the activity log and
-analytics.
+CRUD, automatic follow-ups, quote expiry, rate limiting, the activity log,
+analytics, and the email layer: delivery recording, failure handling, tenant
+isolation on sends, notification preferences and digest de-duplication.
 
-The AI and Stripe clients are injected in tests, so the suite never makes a
-network call.
+The AI, Stripe and email clients are injected in tests, so the suite never makes
+a network call or opens a socket.

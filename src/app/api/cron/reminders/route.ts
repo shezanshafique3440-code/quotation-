@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { AppError, NotConfiguredError } from "@/lib/errors";
 import { expireLapsedQuotations } from "@/lib/follow-ups";
+import { sendFollowUpDigests } from "@/lib/notifications";
 import { pruneRateLimits } from "@/lib/rate-limit";
 import { safeEquals } from "@/lib/session";
 
@@ -14,12 +15,16 @@ export const dynamic = "force-dynamic";
  * Scheduled maintenance endpoint, meant to be called by an external scheduler
  * (cron, Vercel Cron, a queue worker) with the CRON_SECRET bearer token.
  *
- * It does two real things and claims nothing more:
+ * It does three real things and claims nothing more:
  *   1. expires quotations whose validity date has passed;
- *   2. returns the follow-ups that are now due, so the caller can notify.
+ *   2. emails each workspace a digest of its due follow-ups, when an email
+ *      provider is configured — `digestsSent` counts only the digests a
+ *      provider actually accepted, and `digestsSkipped` says why the rest
+ *      were not sent;
+ *   3. returns the follow-ups that are now due, so the caller can act.
  *
- * QuoteFlow has no outbound email or WhatsApp sender, so this endpoint does not
- * pretend to deliver anything — it hands the due items back to the caller.
+ * The digest goes to the workspace owner, never to their customers: QuoteFlow
+ * does not chase anyone on a business's behalf.
  */
 async function handle(request: Request) {
   const env = getEnv();
@@ -41,6 +46,9 @@ async function handle(request: Request) {
   // owner can see why a quotation moved without anyone touching it.
   const expired = await expireLapsedQuotations(now);
   const prunedRateLimits = await pruneRateLimits(now);
+
+  // Expiry runs first, so a quotation that lapsed today is not also chased.
+  const digests = await sendFollowUpDigests(now);
 
   const due = await prisma.reminder.findMany({
     where: { status: "pending", dueAt: { lte: now } },
@@ -66,9 +74,15 @@ async function handle(request: Request) {
     ranAt: now.toISOString(),
     quotationsExpired: expired.expired,
     rateLimitRowsPruned: prunedRateLimits,
-    // QuoteFlow has no outbound sender. These are handed back for the caller
-    // to deliver; nothing here claims a message was sent.
-    delivered: false,
+    // Digests are only counted as sent when a provider accepted them.
+    digestsSent: digests.filter((d) => d.sent).length,
+    digestsSkipped: digests
+      .filter((d) => !d.sent)
+      .map((d) => ({
+        organizationId: d.organizationId,
+        itemCount: d.itemCount,
+        reason: d.reason ?? d.error ?? "unknown",
+      })),
     dueReminders: due.map((reminder) => ({
       id: reminder.id,
       organizationId: reminder.organizationId,

@@ -242,8 +242,9 @@ export async function generateQuotationDraft(request: DraftRequest): Promise<Dra
 /**
  * Draft a follow-up message for a quotation that has gone quiet.
  *
- * Returns text only. QuoteFlow has no outbound sender, so nothing is
- * delivered — the owner copies the draft and sends it themselves.
+ * Returns text only. A follow-up draft is never delivered on the owner's
+ * behalf — not even where email is configured, which only ever sends what the
+ * owner explicitly presses send on. The owner copies the draft and sends it.
  */
 export async function generateFollowUpMessage(
   request: FollowUpRequest,

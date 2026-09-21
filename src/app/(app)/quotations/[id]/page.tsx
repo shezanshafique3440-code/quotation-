@@ -5,7 +5,8 @@ import { ConfirmForm } from "@/components/confirm-form";
 import { Timeline } from "@/components/timeline";
 import { Alert, Badge, Card, CardHeader, PageHeader } from "@/components/ui";
 import { quotationTimeline } from "@/lib/activity";
-import { isAiConfigured } from "@/lib/env";
+import { prisma } from "@/lib/db";
+import { isAiConfigured, isEmailConfigured } from "@/lib/env";
 import { shareUrl } from "@/lib/sharing";
 import {
   QUOTATION_STATUS_LABELS,
@@ -28,6 +29,7 @@ import {
   completeReminderAction,
   snoozeReminderAction,
 } from "@/server/reminder-actions";
+import { EmailPanel } from "./email-panel";
 import { FollowUpDrafter } from "./follow-up-drafter";
 import { ReminderForm } from "./reminder-form";
 import { SharePanel } from "./share-panel";
@@ -63,6 +65,16 @@ export default async function QuotationDetailPage({
   const money = (cents: number) => fmt.money(cents, quotation.currency);
   const now = new Date();
   const timeline = await quotationTimeline(session.organizationId, quotation.id);
+  const lastEmail = await prisma.emailDelivery.findFirst({
+    where: {
+      organizationId: session.organizationId,
+      quotationId: quotation.id,
+      kind: "quotation",
+      status: "sent",
+    },
+    orderBy: { sentAt: "desc" },
+    select: { toEmail: true, sentAt: true },
+  });
 
   const whatsappMessage = buildQuotationMessage(quotation, {
     legalName: profile.legalName,
@@ -229,6 +241,24 @@ export default async function QuotationDetailPage({
           viewCount={quotation.viewCount}
           firstViewedLabel={quotation.firstViewedAt ? fmt.dateTime(quotation.firstViewedAt) : null}
           lastViewedLabel={quotation.lastViewedAt ? fmt.dateTime(quotation.lastViewedAt) : null}
+        />
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Send by email"
+          description="QuoteFlow sends it and records the result — it never reports a send that did not happen."
+        />
+        <EmailPanel
+          quotationId={quotation.id}
+          enabled={isEmailConfigured()}
+          defaultTo={quotation.customer.email}
+          isDraft={status === "draft"}
+          lastSent={
+            lastEmail?.sentAt
+              ? { toEmail: lastEmail.toEmail, sentAtLabel: fmt.dateTime(lastEmail.sentAt) }
+              : null
+          }
         />
       </Card>
 

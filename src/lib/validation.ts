@@ -125,6 +125,11 @@ export const businessProfileSchema = z.object({
   portalHeadline: optionalText(120),
   portalMessage: optionalText(2000),
 
+  notifyEmail: optionalEmail,
+  notifyOnView: z.coerce.boolean().default(false),
+  notifyOnDecision: z.coerce.boolean().default(true),
+  notifyFollowUpsDue: z.coerce.boolean().default(true),
+
   publicPagesEnabled: z.coerce.boolean().default(true),
   requireSignature: z.coerce.boolean().default(false),
   autoFollowUpEnabled: z.coerce.boolean().default(true),
@@ -293,6 +298,19 @@ export type PublicResponseInput = z.infer<typeof publicResponseSchema>;
 export const shareSettingsSchema = z.object({
   quotationId: requiredText(40, "Quotation"),
   action: z.enum(["enable", "disable", "rotate"]),
+});
+
+export const sendQuotationEmailSchema = z.object({
+  quotationId: requiredText(40, "Quotation"),
+  to: z.string().trim().toLowerCase().email("Enter a valid email address."),
+  message: optionalText(2000),
+});
+export type SendQuotationEmailInput = z.infer<typeof sendQuotationEmailSchema>;
+
+export const sendPortalEmailSchema = z.object({
+  customerId: requiredText(40, "Customer"),
+  to: z.string().trim().toLowerCase().email("Enter a valid email address."),
+  message: optionalText(2000),
 });
 
 export const followUpDraftSchema = z.object({

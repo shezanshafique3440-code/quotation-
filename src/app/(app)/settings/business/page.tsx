@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Card, CardHeader, PageHeader } from "@/components/ui";
 import { bpToInput } from "@/lib/format";
+import { isEmailConfigured } from "@/lib/env";
 import { listTimeZones } from "@/lib/timezone";
 import { requireTenant } from "@/lib/tenant";
 import { BusinessProfileForm } from "./form";
@@ -22,6 +23,7 @@ export default async function BusinessProfilePage() {
         <CardHeader title="Details" />
         <BusinessProfileForm
           timeZones={timeZones}
+          emailEnabled={isEmailConfigured()}
           values={{
             legalName: profile.legalName,
             currency: profile.currency,
@@ -50,6 +52,10 @@ export default async function BusinessProfilePage() {
             requireSignature: profile.requireSignature,
             autoFollowUpEnabled: profile.autoFollowUpEnabled,
             autoFollowUpDays: String(profile.autoFollowUpDays),
+            notifyEmail: profile.notifyEmail ?? "",
+            notifyOnView: profile.notifyOnView,
+            notifyOnDecision: profile.notifyOnDecision,
+            notifyFollowUpsDue: profile.notifyFollowUpsDue,
           }}
         />
       </Card>

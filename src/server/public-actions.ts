@@ -11,6 +11,7 @@ import {
 import { text } from "@/lib/form";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { clientIp, clientIpHash, userAgent } from "@/lib/request";
+import { notifyDecision } from "@/lib/notifications";
 import { loadPublicQuotation, respondToQuotation } from "@/lib/sharing";
 import { fieldErrors, publicResponseSchema } from "@/lib/validation";
 
@@ -65,6 +66,21 @@ export async function respondToQuotationAction(
     // nothing is cached to invalidate, and revalidating would re-render the
     // server tree mid-action — unmounting this form before the customer ever
     // sees the confirmation that their response was recorded.
+    // Tell the business. A notification failure must never change what the
+    // customer is told — their decision is already committed.
+    if (!result.alreadyDecided) {
+      await notifyDecision({
+        organizationId: record.organizationId,
+        organizationName: record.organization.name,
+        quotationId: record.id,
+        decision: result.status === "accepted" ? "accepted" : "declined",
+        respondedByName: parsed.data.respondedByName,
+        signatureName: parsed.data.signatureName ?? null,
+        rejectionReason: parsed.data.rejectionReason ?? null,
+        respondedAt: new Date(),
+      });
+    }
+
     if (result.alreadyDecided) {
       return successState(
         result.status === "accepted"

@@ -28,6 +28,26 @@ const schema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
   STRIPE_PRICE_ID_PRO: z.string().min(1).optional(),
 
+  /**
+   * Outbound email. "none" disables sending entirely — the UI then says so
+   * rather than offering a button that silently does nothing.
+   */
+  EMAIL_PROVIDER: z.enum(["resend", "smtp", "none"]).default("none"),
+  /** Envelope sender: "QuoteFlow <quotes@example.com>" or a bare address. */
+  EMAIL_FROM: z.string().min(3).optional(),
+  EMAIL_REPLY_TO: z.string().min(3).optional(),
+
+  RESEND_API_KEY: z.string().min(1).optional(),
+
+  SMTP_HOST: z.string().min(1).optional(),
+  SMTP_PORT: z.coerce.number().int().positive().max(65535).default(587),
+  SMTP_USER: z.string().min(1).optional(),
+  SMTP_PASSWORD: z.string().min(1).optional(),
+  SMTP_SECURE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
   /** Shared secret for the reminder-dispatch cron endpoint. */
   CRON_SECRET: z.string().min(16).optional(),
 
@@ -125,6 +145,15 @@ export function getEnv(): Env {
   if (env.BILLING_PROVIDER === "stripe" && !env.STRIPE_PRICE_ID_PRO) {
     throw new Error("BILLING_PROVIDER=stripe requires STRIPE_PRICE_ID_PRO.");
   }
+  if (env.EMAIL_PROVIDER !== "none" && !env.EMAIL_FROM) {
+    throw new Error(`EMAIL_PROVIDER=${env.EMAIL_PROVIDER} requires EMAIL_FROM.`);
+  }
+  if (env.EMAIL_PROVIDER === "resend" && !env.RESEND_API_KEY) {
+    throw new Error("EMAIL_PROVIDER=resend requires RESEND_API_KEY.");
+  }
+  if (env.EMAIL_PROVIDER === "smtp" && !env.SMTP_HOST) {
+    throw new Error("EMAIL_PROVIDER=smtp requires SMTP_HOST.");
+  }
 
   cached = env;
   return env;
@@ -174,6 +203,7 @@ export interface EnvironmentReport {
   nodeEnv: string;
   ai: boolean;
   billing: boolean;
+  email: boolean;
   cron: boolean;
   publicPages: boolean;
   trustProxyHeaders: boolean;
@@ -205,6 +235,11 @@ export function describeEnvironment(): EnvironmentReport {
         "TRUST_PROXY_HEADERS is false, so rate limits are applied globally rather than per client.",
       );
     }
+    if (!isEmailConfigured()) {
+      warnings.push(
+        "No email provider is configured, so quotations cannot be emailed and nobody is notified when a customer responds.",
+      );
+    }
     if (env.ALLOW_INSECURE_LOCAL) {
       warnings.push(
         "ALLOW_INSECURE_LOCAL is set. This is only for smoke-testing a build locally — never set it on a deployed server.",
@@ -216,6 +251,7 @@ export function describeEnvironment(): EnvironmentReport {
     nodeEnv: env.NODE_ENV,
     ai: isAiConfigured(),
     billing: isBillingConfigured(),
+    email: isEmailConfigured(),
     cron: Boolean(env.CRON_SECRET),
     publicPages: env.PUBLIC_PAGES_ENABLED,
     trustProxyHeaders: env.TRUST_PROXY_HEADERS,
@@ -226,6 +262,13 @@ export function describeEnvironment(): EnvironmentReport {
 export function isAiConfigured(): boolean {
   const env = getEnv();
   return env.AI_PROVIDER === "anthropic" && Boolean(env.ANTHROPIC_API_KEY);
+}
+
+export function isEmailConfigured(): boolean {
+  const env = getEnv();
+  if (env.EMAIL_PROVIDER === "none" || !env.EMAIL_FROM) return false;
+  if (env.EMAIL_PROVIDER === "resend") return Boolean(env.RESEND_API_KEY);
+  return Boolean(env.SMTP_HOST);
 }
 
 export function isBillingConfigured(): boolean {

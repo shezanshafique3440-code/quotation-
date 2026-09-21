@@ -53,6 +53,7 @@ model Organization {
   templates   QuotationTemplate[]
   events      ActivityEvent[]
   portalTokens CustomerPortalToken[]
+  emails      EmailDelivery[]
 }
 
 model BusinessProfile {
@@ -94,6 +95,14 @@ model BusinessProfile {
   requireSignature     Boolean @default(false)
   autoFollowUpEnabled  Boolean @default(true)
   autoFollowUpDays     Int     @default(3)
+
+  // Which outbound emails this workspace wants. Sending is only ever
+  // attempted when a provider is configured; see src/lib/email.ts.
+  /// Address replies go to, and where owner notifications are delivered.
+  notifyEmail          String?
+  notifyOnView         Boolean @default(false)
+  notifyOnDecision     Boolean @default(true)
+  notifyFollowUpsDue   Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -148,6 +157,7 @@ model Customer {
   quotations   Quotation[]
   events       ActivityEvent[]
   portalTokens CustomerPortalToken[]
+  emails       EmailDelivery[]
 
   @@index([organizationId, name])
 }
@@ -268,6 +278,7 @@ model Quotation {
   items        QuotationItem[]
   reminders    Reminder[]
   events       ActivityEvent[]
+  emails       EmailDelivery[]
 
   @@unique([organizationId, number])
   @@index([organizationId, status])
@@ -311,6 +322,12 @@ model Reminder {
   autoCreated Boolean @default(false)
   /// A drafted follow-up message. Drafted only; QuoteFlow never sends it.
   messageDraft String?
+
+  /// When this reminder last went out in a follow-up digest to the owner.
+  /// Set only after a provider accepted the email, so a failed digest is
+  /// retried on the next run instead of being silently swallowed. It also
+  /// stops an hourly scheduler from mailing the same item every hour.
+  digestedAt DateTime?
 
   completedAt DateTime?
   createdAt   DateTime  @default(now())
@@ -446,4 +463,47 @@ model RateLimitCounter {
   windowEndsAt DateTime
 
   @@index([windowEndsAt])
+}
+
+
+/// Every outbound email attempt, successful or not.
+///
+/// This table is the reason the product can say "sent" truthfully: a row only
+/// reaches `sent` when a provider accepted the message and returned an id.
+/// A failure is recorded with its error and surfaced to the user, never
+/// swallowed into a success message.
+model EmailDelivery {
+  id             String @id @default(cuid())
+  organizationId String
+
+  /// "quotation" | "accepted" | "declined" | "follow_up_digest" | "portal_link"
+  kind      String
+  /// "queued" | "sent" | "failed"
+  status    String @default("queued")
+  provider  String
+
+  toEmail   String
+  /// Copy of the subject as actually sent, for the audit trail.
+  subject   String
+
+  quotationId String?
+  customerId  String?
+
+  /// Provider-side id, present only on a genuine success.
+  providerMessageId String?
+  /// Provider or transport error, present only on a failure.
+  error             String?
+
+  attempts   Int       @default(0)
+  sentAt     DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation?   @relation(fields: [quotationId], references: [id], onDelete: SetNull)
+  customer     Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([quotationId])
+  @@index([status, createdAt])
 }

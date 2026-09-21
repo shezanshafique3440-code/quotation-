@@ -30,6 +30,10 @@ export interface TenantProfile {
   requireSignature: boolean;
   autoFollowUpEnabled: boolean;
   autoFollowUpDays: number;
+  notifyEmail: string | null;
+  notifyOnView: boolean;
+  notifyOnDecision: boolean;
+  notifyFollowUpsDue: boolean;
 }
 
 export interface TenantContext {
@@ -66,6 +70,10 @@ const FALLBACK: Omit<TenantProfile, "legalName"> = {
   requireSignature: false,
   autoFollowUpEnabled: true,
   autoFollowUpDays: 3,
+  notifyEmail: null,
+  notifyOnView: false,
+  notifyOnDecision: true,
+  notifyFollowUpsDue: true,
 };
 
 export async function loadTenantProfile(
@@ -103,6 +111,10 @@ export async function loadTenantProfile(
     requireSignature: profile.requireSignature,
     autoFollowUpEnabled: profile.autoFollowUpEnabled,
     autoFollowUpDays: profile.autoFollowUpDays,
+    notifyEmail: profile.notifyEmail,
+    notifyOnView: profile.notifyOnView,
+    notifyOnDecision: profile.notifyOnDecision,
+    notifyFollowUpsDue: profile.notifyFollowUpsDue,
   };
 }
 

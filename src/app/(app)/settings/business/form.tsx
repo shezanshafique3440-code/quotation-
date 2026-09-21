@@ -35,14 +35,21 @@ export interface ProfileValues {
   requireSignature: boolean;
   autoFollowUpEnabled: boolean;
   autoFollowUpDays: string;
+  notifyEmail: string;
+  notifyOnView: boolean;
+  notifyOnDecision: boolean;
+  notifyFollowUpsDue: boolean;
 }
 
 export function BusinessProfileForm({
   values,
   timeZones,
+  emailEnabled,
 }: {
   values: ProfileValues;
   timeZones: string[];
+  /** False when the deployment has no email provider at all. */
+  emailEnabled: boolean;
 }) {
   const [state, action] = useActionState(updateBusinessProfileAction, idleState);
   const errors = state.fieldErrors ?? {};
@@ -268,6 +275,80 @@ export function BusinessProfileForm({
               defaultValue={values.portalMessage}
             />
           </Field>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-semibold">Email notifications</h3>
+
+        {!emailEnabled ? (
+          <Alert tone="warning" title="Email is not configured on this deployment">
+            These preferences are saved, but nothing will be sent until an administrator sets
+            EMAIL_PROVIDER and EMAIL_FROM.
+          </Alert>
+        ) : null}
+
+        <Field
+          label="Send notifications to"
+          htmlFor="notifyEmail"
+          error={errors.notifyEmail}
+          hint="Leave blank to use your business email address."
+        >
+          <input
+            id="notifyEmail"
+            name="notifyEmail"
+            type="email"
+            className="input"
+            defaultValue={values.notifyEmail}
+            placeholder="sales@yourbusiness.com"
+          />
+        </Field>
+
+        <div className="space-y-3">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="notifyOnDecision"
+              defaultChecked={values.notifyOnDecision}
+              className="mt-0.5 size-4 rounded border-[var(--color-line)]"
+            />
+            <span>
+              Email me when a customer accepts or declines
+              <span className="block text-xs text-[var(--color-ink-subtle)]">
+                Recommended — otherwise you only find out by opening the dashboard.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="notifyOnView"
+              defaultChecked={values.notifyOnView}
+              className="mt-0.5 size-4 rounded border-[var(--color-line)]"
+            />
+            <span>
+              Email me when a customer opens a quotation
+              <span className="block text-xs text-[var(--color-ink-subtle)]">
+                One message per open, at most once every five minutes per quotation.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="notifyFollowUpsDue"
+              defaultChecked={values.notifyFollowUpsDue}
+              className="mt-0.5 size-4 rounded border-[var(--color-line)]"
+            />
+            <span>
+              Email me a digest when follow-ups fall due
+              <span className="block text-xs text-[var(--color-ink-subtle)]">
+                One message listing everything due, only when something is.
+              </span>
+            </span>
+          </label>
         </div>
       </div>
 

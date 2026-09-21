@@ -33,6 +33,8 @@ export const ACTIVITY_KINDS = {
   aiDrafted: "quotation.ai_drafted",
   aiFollowUpDrafted: "quotation.ai_follow_up_drafted",
   followUpScheduled: "quotation.follow_up_scheduled",
+  emailSent: "quotation.email_sent",
+  emailFailed: "quotation.email_failed",
   followUpCompleted: "quotation.follow_up_completed",
   followUpCancelled: "quotation.follow_up_cancelled",
 
@@ -41,6 +43,7 @@ export const ACTIVITY_KINDS = {
   portalLinkIssued: "customer.portal_link_issued",
   portalLinkRevoked: "customer.portal_link_revoked",
   portalOpened: "customer.portal_opened",
+  portalEmailSent: "customer.portal_email_sent",
 
   signedIn: "security.signed_in",
   signInFailed: "security.sign_in_failed",

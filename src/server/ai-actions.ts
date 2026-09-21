@@ -172,7 +172,8 @@ export async function generateDraftAction(
  * Draft a follow-up message for a quotation that has gone quiet.
  *
  * The draft is saved against the reminder so the owner can find it again, and
- * nothing is sent: QuoteFlow has no outbound channel, and the UI says so.
+ * nothing is sent. Follow-up drafts are never delivered by QuoteFlow — the
+ * owner copies the text and sends it themselves, and the UI says so.
  */
 export async function draftFollowUpAction(
   _prev: ActionState,

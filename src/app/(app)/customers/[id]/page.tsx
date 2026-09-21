@@ -5,6 +5,7 @@ import { ConfirmForm } from "@/components/confirm-form";
 import { Timeline } from "@/components/timeline";
 import { Badge, Card, CardHeader, PageHeader } from "@/components/ui";
 import { customerTimeline } from "@/lib/activity";
+import { isEmailConfigured } from "@/lib/env";
 import { hasActivePortalLink } from "@/lib/portal";
 import { QUOTATION_STATUS_LABELS, type QuotationStatus } from "@/lib/constants";
 import { prisma } from "@/lib/db";
@@ -63,6 +64,8 @@ export default async function CustomerDetailPage({
           customerId={customer.id}
           hasActiveLink={portal.active}
           expiresLabel={portal.expiresAt ? fmt.date(portal.expiresAt) : null}
+          emailEnabled={isEmailConfigured()}
+          customerEmail={customer.email}
         />
       </Card>
 

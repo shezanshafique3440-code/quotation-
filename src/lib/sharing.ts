@@ -289,12 +289,18 @@ export interface ViewContext {
  * fabricated signal. Repeat views inside a short window are also collapsed so
  * a refresh does not inflate the count.
  */
+export interface ViewOutcome {
+  /** False when the visit was skipped as automated or as a repeat. */
+  counted: boolean;
+  firstView: boolean;
+}
+
 export async function recordPublicView(
   record: PublicQuotationRecord,
   context: ViewContext,
   now: Date = new Date(),
-): Promise<void> {
-  if (context.automated) return;
+): Promise<ViewOutcome> {
+  if (context.automated) return { counted: false, firstView: false };
 
   const VIEW_DEDUPE_MS = 5 * 60_000;
   const lastViewed = record.lastViewedAt?.getTime() ?? 0;
@@ -309,7 +315,7 @@ export async function recordPublicView(
     },
   });
 
-  if (isRepeat) return;
+  if (isRepeat) return { counted: false, firstView: false };
 
   await recordActivity({
     organizationId: record.organizationId,
@@ -326,6 +332,8 @@ export async function recordPublicView(
     ipHash: context.ipHash,
     userAgent: context.userAgent,
   });
+
+  return { counted: true, firstView: record.firstViewedAt === null };
 }
 
 export interface RespondInput {

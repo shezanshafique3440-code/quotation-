@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/api";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { clientIp, clientIpHash, looksAutomated, userAgent } from "@/lib/request";
+import { notifyView } from "@/lib/notifications";
 import { loadPublicQuotation, recordPublicView } from "@/lib/sharing";
 
 export const runtime = "nodejs";
@@ -32,13 +33,23 @@ export async function POST(
     const record = await loadPublicQuotation(token);
     if (!record) return NextResponse.json({ recorded: false }, { status: 200 });
 
-    await recordPublicView(record, {
+    const outcome = await recordPublicView(record, {
       ipHash: clientIpHash(request.headers),
       userAgent: agent,
       automated: looksAutomated(agent),
     });
 
-    return NextResponse.json({ recorded: true });
+    if (outcome.counted) {
+      await notifyView({
+        organizationId: record.organizationId,
+        organizationName: record.organization.name,
+        quotationId: record.id,
+        customerName: record.customer.name,
+        firstView: outcome.firstView,
+      });
+    }
+
+    return NextResponse.json({ recorded: outcome.counted });
   } catch (error) {
     return jsonError(error);
   }

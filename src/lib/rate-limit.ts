@@ -25,6 +25,7 @@ export const RATE_LIMITS = {
   publicRespond: { limit: 10, windowMs: 60 * 60_000 },
   portalAccess: { limit: 60, windowMs: 60_000 },
   aiGenerate: { limit: 20, windowMs: 60 * 60_000 },
+  emailSend: { limit: 60, windowMs: 60 * 60_000 },
   pdfDownload: { limit: 60, windowMs: 60_000 },
   webhook: { limit: 600, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
