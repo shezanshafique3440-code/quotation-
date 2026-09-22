@@ -58,8 +58,9 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           </nav>
           <p className="mt-4 max-w-2xl text-xs text-[var(--color-ink-subtle)]">
             QuoteFlow AI produces quotations, WhatsApp message drafts and follow-up reminders. It
-            does not send messages on your behalf. AI drafting and card payments are optional
-            integrations, configured per deployment.
+            emails a quotation only when you press send, and never chases your customers for you.
+            AI drafting, email and card payments are optional integrations, configured per
+            deployment.
           </p>
         </div>
       </footer>

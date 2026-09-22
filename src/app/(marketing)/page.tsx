@@ -32,6 +32,10 @@ const FEATURES = [
     body: "Get the exact text plus a click-to-chat link that opens your own WhatsApp. Nothing is sent behind your back.",
   },
   {
+    title: "Email it from QuoteFlow",
+    body: "Send the quotation from your own domain and get told the moment your customer opens or answers it. Every send is recorded with the provider's own receipt.",
+  },
+  {
     title: "Status you can trust",
     body: "Draft, sent, accepted, rejected, expired — with follow-up reminders so quiet quotes get chased.",
   },

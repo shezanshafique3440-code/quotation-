@@ -25,6 +25,15 @@ const SECTIONS = [
     ],
   },
   {
+    title: "Email from your own domain",
+    body: "Send the quotation and its link straight from QuoteFlow, through Resend or your own SMTP server. Every attempt is recorded, so the app only ever says \u201csent\u201d when your provider actually accepted the message.",
+    points: [
+      "A failed send shows your provider's own error and changes nothing else",
+      "Get told when a customer opens a quotation, and when they accept or decline",
+      "A daily digest of the follow-ups now due \u2014 to you, never to your customers",
+    ],
+  },
+  {
     title: "Accept, decline and sign",
     body: "The customer decides on the page. Acceptance is recorded against the quotation with a timestamp, and optionally a typed electronic signature with the signer's name, email and a one-way hash of their IP address.",
     points: [
@@ -102,10 +111,12 @@ export default function FeaturesPage() {
       <section className="mt-14 card p-6">
         <h2 className="text-lg font-semibold">What QuoteFlow does not do</h2>
         <p className="mt-2 text-sm text-[var(--color-ink-muted)]">
-          It does not send WhatsApp messages or emails for you — it writes the message and opens
-          your own client, so nothing goes out that you have not read. AI drafts are drafts: they
-          reprice every catalog line from your database and never invent a figure. And a plan only
-          becomes Pro when a signature-verified payment webhook says so.
+          It does not send WhatsApp messages for you — it writes the message and opens your own
+          client, so nothing goes out that you have not read. Email is sent only when you press
+          send: QuoteFlow never chases a customer on your behalf, and never reports a send that
+          your provider did not accept. AI drafts are drafts: they reprice every catalog line from
+          your database and never invent a figure. And a plan only becomes Pro when a
+          signature-verified payment webhook says so.
         </p>
         <Link href="/sign-up" className="btn btn-primary mt-5">
           Start free
