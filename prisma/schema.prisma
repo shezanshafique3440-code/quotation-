@@ -15,16 +15,69 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String @id @default(cuid())
+  email        String @unique
   name         String
   passwordHash String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+
+  /// Set the first time the address is proved by following an emailed link.
+  /// Null means unproven, never "assumed fine": nothing writes this except a
+  /// valid verification token, so it is always a fact.
+  emailVerifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   memberships Membership[]
   sessions    Session[]
-  quotations  Quotation[] @relation("QuotationAuthor")
+  quotations  Quotation[]  @relation("QuotationAuthor")
+  authTokens  AuthToken[]
+  sentInvites Invitation[] @relation("InvitationSender")
+}
+
+/// One-time credential emailed to a user: a password reset or an address
+/// verification. The primary key is an HMAC of the token, so the raw value
+/// exists only in the email — a database dump yields nothing usable.
+model AuthToken {
+  id      String @id
+  userId  String
+  /// "password_reset" | "email_verification"
+  purpose String
+
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  /// Keyed hash of the requesting client, for the audit trail only.
+  requestedIpHash String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+}
+
+/// A pending invitation to join a workspace. The address may not have an
+/// account yet, so this is keyed by email rather than user. The token is
+/// stored as an HMAC for the same reason as AuthToken.
+model Invitation {
+  id             String @id
+  organizationId String
+  email          String
+  /// "admin" | "member" — an invitation never grants ownership.
+  role           String @default("member")
+  invitedById    String
+
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationSender", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, email])
+  @@index([expiresAt])
 }
 
 model Organization {
@@ -41,49 +94,50 @@ model Organization {
   stripeCustomerId     String?   @unique
   stripeSubscriptionId String?   @unique
 
-  profile     BusinessProfile?
-  memberships Membership[]
-  sessions    Session[]
-  customers   Customer[]
-  inquiries   Inquiry[]
-  products    Product[]
-  quotations  Quotation[]
-  reminders   Reminder[]
-  usageEvents UsageEvent[]
-  templates   QuotationTemplate[]
-  events      ActivityEvent[]
+  profile      BusinessProfile?
+  memberships  Membership[]
+  sessions     Session[]
+  customers    Customer[]
+  inquiries    Inquiry[]
+  products     Product[]
+  quotations   Quotation[]
+  reminders    Reminder[]
+  usageEvents  UsageEvent[]
+  templates    QuotationTemplate[]
+  events       ActivityEvent[]
   portalTokens CustomerPortalToken[]
-  emails      EmailDelivery[]
+  emails       EmailDelivery[]
+  invitations  Invitation[]
 }
 
 model BusinessProfile {
   id             String @id @default(cuid())
   organizationId String @unique
 
-  legalName      String
-  currency       String  @default("USD")
-  locale         String  @default("en-US")
-  email          String?
-  phone          String?
-  whatsappNumber String?
-  website        String?
-  addressLine1   String?
-  addressLine2   String?
-  city           String?
-  postalCode     String?
-  country        String?
-  taxId          String?
+  legalName           String
+  currency            String  @default("USD")
+  locale              String  @default("en-US")
+  email               String?
+  phone               String?
+  whatsappNumber      String?
+  website             String?
+  addressLine1        String?
+  addressLine2        String?
+  city                String?
+  postalCode          String?
+  country             String?
+  taxId               String?
   // Default tax rate in basis points (1250 = 12.50%).
-  taxRateBp      Int     @default(0)
-  logoUrl        String?
-  quoteNumberPrefix String @default("QT")
-  defaultValidityDays Int  @default(14)
-  defaultTerms   String?
-  defaultNotes   String?
+  taxRateBp           Int     @default(0)
+  logoUrl             String?
+  quoteNumberPrefix   String  @default("QT")
+  defaultValidityDays Int     @default(14)
+  defaultTerms        String?
+  defaultNotes        String?
 
   /// IANA zone (e.g. "Europe/Berlin"). Every date shown to a user and every
   /// end-of-day expiry boundary is resolved in this zone, not the server's.
-  timezone       String  @default("UTC")
+  timezone String @default("UTC")
 
   // Branding applied to the shareable quote page, the portal and the PDF.
   brandColor     String  @default("#4B3DDB")
@@ -91,18 +145,18 @@ model BusinessProfile {
   portalMessage  String?
 
   // Quote-to-close defaults, overridable per quotation.
-  publicPagesEnabled   Boolean @default(true)
-  requireSignature     Boolean @default(false)
-  autoFollowUpEnabled  Boolean @default(true)
-  autoFollowUpDays     Int     @default(3)
+  publicPagesEnabled  Boolean @default(true)
+  requireSignature    Boolean @default(false)
+  autoFollowUpEnabled Boolean @default(true)
+  autoFollowUpDays    Int     @default(3)
 
   // Which outbound emails this workspace wants. Sending is only ever
   // attempted when a provider is configured; see src/lib/email.ts.
   /// Address replies go to, and where owner notifications are delivered.
-  notifyEmail          String?
-  notifyOnView         Boolean @default(false)
-  notifyOnDecision     Boolean @default(true)
-  notifyFollowUpsDue   Boolean @default(true)
+  notifyEmail        String?
+  notifyOnView       Boolean @default(false)
+  notifyOnDecision   Boolean @default(true)
+  notifyFollowUpsDue Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -152,7 +206,7 @@ model Customer {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   inquiries    Inquiry[]
   quotations   Quotation[]
   events       ActivityEvent[]
@@ -197,7 +251,7 @@ model Product {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization  Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization  Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   items         QuotationItem[]
   templateItems QuotationTemplateItem[]
 
@@ -233,8 +287,8 @@ model Quotation {
   /// Share-link token. Stored in the clear because the owner must be able to
   /// re-copy the link; it is revocable and only ever grants read + respond on
   /// this one quotation. Disabling `publicEnabled` blocks it immediately.
-  publicToken   String?   @unique
-  publicEnabled Boolean   @default(false)
+  publicToken    String?   @unique
+  publicEnabled  Boolean   @default(false)
   publicOpenedAt DateTime?
 
   // Engagement, recorded from real page views of the share link only.
@@ -270,10 +324,10 @@ model Quotation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  customer     Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  inquiry      Inquiry?        @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
-  createdBy    User?           @relation("QuotationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  inquiry      Inquiry?           @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
+  createdBy    User?              @relation("QuotationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
   template     QuotationTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   items        QuotationItem[]
   reminders    Reminder[]
@@ -319,7 +373,7 @@ model Reminder {
 
   /// True when the system scheduled this after the quote was sent, rather
   /// than a person adding it. Auto follow-ups are cancelled on a decision.
-  autoCreated Boolean @default(false)
+  autoCreated  Boolean @default(false)
   /// A drafted follow-up message. Drafted only; QuoteFlow never sends it.
   messageDraft String?
 
@@ -370,7 +424,7 @@ model QuotationTemplate {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   items        QuotationTemplateItem[]
   quotations   Quotation[]
 
@@ -379,7 +433,7 @@ model QuotationTemplate {
 }
 
 model QuotationTemplateItem {
-  id         String @id @default(cuid())
+  id         String  @id @default(cuid())
   templateId String
   productId  String?
 
@@ -465,7 +519,6 @@ model RateLimitCounter {
   @@index([windowEndsAt])
 }
 
-
 /// Every outbound email attempt, successful or not.
 ///
 /// This table is the reason the product can say "sent" truthfully: a row only
@@ -477,14 +530,14 @@ model EmailDelivery {
   organizationId String
 
   /// "quotation" | "accepted" | "declined" | "follow_up_digest" | "portal_link"
-  kind      String
+  kind     String
   /// "queued" | "sent" | "failed"
-  status    String @default("queued")
-  provider  String
+  status   String @default("queued")
+  provider String
 
-  toEmail   String
+  toEmail String
   /// Copy of the subject as actually sent, for the audit trail.
-  subject   String
+  subject String
 
   quotationId String?
   customerId  String?
@@ -494,10 +547,10 @@ model EmailDelivery {
   /// Provider or transport error, present only on a failure.
   error             String?
 
-  attempts   Int       @default(0)
-  sentAt     DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  attempts  Int       @default(0)
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   quotation    Quotation?   @relation(fields: [quotationId], references: [id], onDelete: SetNull)

@@ -7,8 +7,11 @@ import {
   notifyDecision,
   notifyView,
   sendFollowUpDigests,
+  sendInvitationEmail,
+  sendPasswordResetEmail,
   sendPortalEmail,
   sendQuotationEmail,
+  sendVerificationEmail,
 } from "@/lib/notifications";
 import { createSharedQuotation, createWorkspace, resetDatabase, type Workspace } from "./helpers";
 
@@ -541,5 +544,104 @@ describe("sendFollowUpDigests", () => {
 
     disableEmail();
     expect(await sendFollowUpDigests(now)).toEqual([]);
+  });
+});
+
+describe("account and invitation emails", () => {
+  it("sends a password reset from QuoteFlow rather than the workspace", async () => {
+    const workspace = await createWorkspace();
+    const outcome = await sendPasswordResetEmail({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      to: "sam@example.test",
+      name: "Sam Rivera",
+      url: "https://app.example.com/reset-password/tok",
+      expiresAt: new Date("2026-09-22T11:00:00Z"),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(sent[0]!.message.subject).toMatch(/QuoteFlow/);
+    expect(sent[0]!.message.text).toContain("https://app.example.com/reset-password/tok");
+
+    const row = await prisma.emailDelivery.findFirstOrThrow();
+    expect(row.kind).toBe("password_reset");
+    expect(row.status).toBe("sent");
+  });
+
+  it("records a verification email against the workspace", async () => {
+    const workspace = await createWorkspace();
+    await sendVerificationEmail({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      to: "sam@example.test",
+      name: "Sam Rivera",
+      url: "https://app.example.com/verify-email/tok",
+      expiresAt: new Date("2026-09-24T10:00:00Z"),
+    });
+
+    const row = await prisma.emailDelivery.findFirstOrThrow();
+    expect(row.kind).toBe("verify_email");
+    expect(row.organizationId).toBe(workspace.organizationId);
+  });
+
+  it("never reports a reset as sent when the provider refused it", async () => {
+    const workspace = await createWorkspace();
+    __setEmailTransportForTests(failingTransport("relay denied"));
+
+    const outcome = await sendPasswordResetEmail({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      to: "sam@example.test",
+      name: "Sam Rivera",
+      url: "https://app.example.com/reset-password/tok",
+      expiresAt: new Date("2026-09-22T11:00:00Z"),
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toMatch(/relay denied/);
+    expect((await prisma.emailDelivery.findFirstOrThrow()).status).toBe("failed");
+  });
+
+  it("sends an invitation with the workspace's own branding", async () => {
+    const workspace = await createWorkspace();
+    await prisma.businessProfile.update({
+      where: { organizationId: workspace.organizationId },
+      data: { legalName: "Northline Joinery Ltd" },
+    });
+
+    const outcome = await sendInvitationEmail({
+      organizationId: workspace.organizationId,
+      organizationName: "Northline",
+      to: "alex@example.test",
+      invitedByName: "Sam Rivera",
+      roleLabel: "Member",
+      roleDescription: "Quotes, customers and follow-ups.",
+      inviteUrl: "https://app.example.com/invite/tok",
+      expiresAt: new Date("2026-10-06T10:00:00Z"),
+      hasAccount: false,
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(sent[0]!.message.subject).toContain("Northline Joinery Ltd");
+    expect(sent[0]!.message.text).toContain("https://app.example.com/invite/tok");
+    expect((await prisma.emailDelivery.findFirstOrThrow()).kind).toBe("invitation");
+  });
+
+  it("sends nothing at all when no provider is configured", async () => {
+    const workspace = await createWorkspace();
+    disableEmail();
+
+    const outcome = await sendPasswordResetEmail({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      to: "sam@example.test",
+      name: "Sam Rivera",
+      url: "https://app.example.com/reset-password/tok",
+      expiresAt: new Date("2026-09-22T11:00:00Z"),
+    });
+
+    expect(outcome).toMatchObject({ ok: false, skipped: true });
+    expect(sent).toHaveLength(0);
+    expect(await prisma.emailDelivery.count()).toBe(0);
   });
 });

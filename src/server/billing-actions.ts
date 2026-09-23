@@ -5,6 +5,7 @@ import { isFrameworkError, toActionState, type ActionState } from "@/lib/action-
 import { createCheckoutSession, createPortalSession } from "@/lib/billing";
 import { isBillingConfigured } from "@/lib/env";
 import { ForbiddenError, NotConfiguredError } from "@/lib/errors";
+import { can } from "@/lib/roles";
 import { requireSession } from "@/lib/session";
 
 /**
@@ -19,8 +20,8 @@ export async function startCheckoutAction(
   let url: string;
   try {
     const session = await requireSession();
-    if (session.role !== "owner" && session.role !== "admin") {
-      throw new ForbiddenError("Only workspace owners and admins can change the plan.");
+    if (!can(session.role, "billing:manage")) {
+      throw new ForbiddenError("Only the workspace owner can change the plan.");
     }
     if (!isBillingConfigured()) {
       throw new NotConfiguredError(
@@ -46,8 +47,8 @@ export async function openBillingPortalAction(
   let url: string;
   try {
     const session = await requireSession();
-    if (session.role !== "owner" && session.role !== "admin") {
-      throw new ForbiddenError("Only workspace owners and admins can manage billing.");
+    if (!can(session.role, "billing:manage")) {
+      throw new ForbiddenError("Only the workspace owner can manage billing.");
     }
     url = await createPortalSession(session.organizationId);
   } catch (error) {

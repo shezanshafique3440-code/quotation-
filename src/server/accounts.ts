@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { consumeAuthToken } from "@/lib/auth-tokens";
 import { prisma } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { hashPassword, verifyPassword } from "@/lib/password";
@@ -113,3 +114,56 @@ export async function authenticate(input: SignInInput): Promise<AuthenticatedUse
 // A real scrypt hash of a value nobody can supply, used only for timing parity.
 const DUMMY_HASH =
   "scrypt$16384$8$1$Y2FuYXJ5c2FsdGNhbmFyeQ$RUq6gYMk3ZJ3Xz0m6nO2rN1kq0Wl9Yl7Vw3s8wXqjJ5t2Yc0Z1n6lQ7kK4pM3bR";
+
+export interface AppliedPasswordReset {
+  userId: string;
+  name: string;
+  email: string;
+  organizationId: string | null;
+  /** How many sessions were signed out by the change. */
+  sessionsEnded: number;
+}
+
+/**
+ * Spend a reset token and install the new password.
+ *
+ * Every session for that user is destroyed in the same transaction. If the
+ * link was used by somebody who should not have had it, the real owner is
+ * signed out and notices; if it was the owner, signing in again is a small
+ * price. Any other outstanding reset link is dropped for the same reason.
+ *
+ * Returns null when the token is not usable, so the caller can say so without
+ * distinguishing expired from spent from forged.
+ */
+export async function applyPasswordReset(
+  token: string,
+  newPassword: string,
+  now: Date = new Date(),
+): Promise<AppliedPasswordReset | null> {
+  const consumed = await consumeAuthToken(token, "password_reset", now);
+  if (!consumed) return null;
+
+  const passwordHash = await hashPassword(newPassword);
+
+  const [, sessions] = await prisma.$transaction([
+    prisma.user.update({ where: { id: consumed.userId }, data: { passwordHash } }),
+    prisma.session.deleteMany({ where: { userId: consumed.userId } }),
+    prisma.authToken.deleteMany({
+      where: { userId: consumed.userId, purpose: "password_reset", usedAt: null },
+    }),
+  ]);
+
+  const membership = await prisma.membership.findFirst({
+    where: { userId: consumed.userId },
+    orderBy: { createdAt: "asc" },
+    select: { organizationId: true },
+  });
+
+  return {
+    userId: consumed.userId,
+    name: consumed.user.name,
+    email: consumed.user.email,
+    organizationId: membership?.organizationId ?? null,
+    sessionsEnded: sessions.count,
+  };
+}

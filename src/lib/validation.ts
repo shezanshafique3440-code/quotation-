@@ -9,6 +9,7 @@ import {
   QUOTATION_STATUSES,
   REMINDER_CHANNELS,
 } from "./constants";
+import { INVITABLE_ROLES, ROLES } from "./roles";
 
 
 const trimmed = (max: number) => z.string().trim().max(max);
@@ -92,6 +93,56 @@ export const signInSchema = z.object({
   password: z.string().min(1, "Password is required."),
 });
 export type SignInInput = z.infer<typeof signInSchema>;
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address."),
+});
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+
+export const resetPasswordSchema = z
+  .object({
+    token: requiredText(200, "Reset link"),
+    password: z
+      .string()
+      .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
+      .max(200, "Password must be at most 200 characters."),
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Those passwords do not match.",
+    path: ["confirmPassword"],
+  });
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+
+export const inviteMemberSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address."),
+  role: z.enum(INVITABLE_ROLES),
+});
+export type InviteMemberInput = z.infer<typeof inviteMemberSchema>;
+
+export const memberRoleSchema = z.object({
+  membershipId: requiredText(64, "Member"),
+  role: z.enum(ROLES),
+});
+
+export const membershipRefSchema = z.object({
+  membershipId: requiredText(64, "Member"),
+});
+
+export const invitationRefSchema = z.object({
+  invitationId: requiredText(64, "Invitation"),
+});
+
+/** Accepting an invitation as a brand-new account. */
+export const acceptInvitationSchema = z.object({
+  token: requiredText(200, "Invitation"),
+  name: requiredText(120, "Your name"),
+  password: z
+    .string()
+    .min(MIN_PASSWORD_LENGTH, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
+    .max(200, "Password must be at most 200 characters."),
+});
+export type AcceptInvitationInput = z.infer<typeof acceptInvitationSchema>;
 
 export const businessProfileSchema = z.object({
   legalName: requiredText(160, "Business name"),

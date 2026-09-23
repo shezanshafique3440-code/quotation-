@@ -70,6 +70,15 @@ const SECTIONS = [
     ],
   },
   {
+    title: "Teammates, with real roles",
+    body: "Invite colleagues by email as Admin or Member. Everyone can quote; only owners and admins change the workspace, and only the owner touches billing. Seats are counted against your plan, pending invitations included.",
+    points: [
+      "An invitation works only for the address it was sent to, and expires in 14 days",
+      "Removing someone ends their access on their very next click, not at session expiry",
+      "A workspace always keeps an owner, and an invitation never grants ownership",
+    ],
+  },
+  {
     title: "A portal for repeat customers",
     body: "Give a customer one link that lists everything you have quoted them. They come back to it instead of asking you to resend.",
     points: [

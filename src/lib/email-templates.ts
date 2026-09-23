@@ -394,3 +394,147 @@ export function renderPortalEmail(input: PortalEmailInput): RenderedEmail {
     ]),
   };
 }
+
+/**
+ * Branding for messages that come from QuoteFlow itself rather than from a
+ * business: a password reset is from the product, and dressing it in a
+ * tenant's logo would misattribute it.
+ */
+export const PRODUCT_BRANDING: EmailBranding = {
+  businessName: "QuoteFlow AI",
+  brandColor: null,
+  locale: "en-US",
+};
+
+export interface PasswordResetEmailInput {
+  name: string;
+  resetUrl: string;
+  expiresLabel: string;
+}
+
+export function renderPasswordResetEmail(input: PasswordResetEmailInput): RenderedEmail {
+  const bodyHtml = `
+    <p style="margin:0 0 14px">Hi ${escapeHtml(input.name)},</p>
+    <p style="margin:0 0 14px">
+      Someone asked to reset the password on your QuoteFlow account. Use the button below to
+      choose a new one.
+    </p>
+    <p style="margin:0;font-size:13px;color:#6b7280">
+      The link stops working ${escapeHtml(input.expiresLabel)}, and signs you out everywhere once used.
+    </p>`;
+
+  return {
+    subject: "Reset your QuoteFlow password",
+    html: layout({
+      branding: PRODUCT_BRANDING,
+      heading: "Reset your password",
+      bodyHtml,
+      cta: { label: "Choose a new password", url: input.resetUrl },
+      footerNote: "If you did not ask for this, ignore this email — your password is unchanged.",
+    }),
+    text: textBlock([
+      `Hi ${input.name},`,
+      "",
+      "Someone asked to reset the password on your QuoteFlow account.",
+      "Choose a new one here:",
+      input.resetUrl,
+      "",
+      `The link stops working ${input.expiresLabel}, and signs you out everywhere once used.`,
+      "If you did not ask for this, ignore this email — your password is unchanged.",
+    ]),
+  };
+}
+
+export interface VerifyEmailInput {
+  name: string;
+  verifyUrl: string;
+  expiresLabel: string;
+}
+
+export function renderVerifyEmail(input: VerifyEmailInput): RenderedEmail {
+  const bodyHtml = `
+    <p style="margin:0 0 14px">Hi ${escapeHtml(input.name)},</p>
+    <p style="margin:0 0 14px">
+      Confirm this address so QuoteFlow can email quotations on your behalf and reach you when a
+      customer responds.
+    </p>
+    <p style="margin:0;font-size:13px;color:#6b7280">
+      This link works until ${escapeHtml(input.expiresLabel)}.
+    </p>`;
+
+  return {
+    subject: "Confirm your email address",
+    html: layout({
+      branding: PRODUCT_BRANDING,
+      heading: "Confirm your email address",
+      bodyHtml,
+      cta: { label: "Confirm my address", url: input.verifyUrl },
+      footerNote: "If you did not create a QuoteFlow account, ignore this email.",
+    }),
+    text: textBlock([
+      `Hi ${input.name},`,
+      "",
+      "Confirm this address so QuoteFlow can email quotations on your behalf",
+      "and reach you when a customer responds:",
+      input.verifyUrl,
+      "",
+      `This link works until ${input.expiresLabel}.`,
+      "If you did not create a QuoteFlow account, ignore this email.",
+    ]),
+  };
+}
+
+export interface InvitationEmailInput {
+  branding: EmailBranding;
+  workspaceName: string;
+  invitedByName: string;
+  roleLabel: string;
+  roleDescription: string;
+  inviteUrl: string;
+  expiresLabel: string;
+  /** True when the address already has a QuoteFlow account. */
+  hasAccount: boolean;
+}
+
+export function renderInvitationEmail(input: InvitationEmailInput): RenderedEmail {
+  const bodyHtml = `
+    <p style="margin:0 0 14px">
+      ${escapeHtml(input.invitedByName)} invited you to join
+      <strong>${escapeHtml(input.workspaceName)}</strong> on QuoteFlow as
+      <strong>${escapeHtml(input.roleLabel)}</strong>.
+    </p>
+    <p style="margin:0 0 14px;font-size:14px;color:#4b5563">${escapeHtml(input.roleDescription)}</p>
+    <p style="margin:0;font-size:13px;color:#6b7280">
+      ${
+        input.hasAccount
+          ? "Sign in with this address to accept."
+          : "You will pick a password when you accept."
+      }
+      The invitation expires ${escapeHtml(input.expiresLabel)}.
+    </p>`;
+
+  return {
+    subject: `${input.invitedByName} invited you to ${input.workspaceName} on QuoteFlow`,
+    html: layout({
+      branding: input.branding,
+      heading: `Join ${input.workspaceName}`,
+      bodyHtml,
+      cta: { label: "Accept the invitation", url: input.inviteUrl },
+      footerNote: "If you were not expecting this, you can ignore it — nothing happens until you accept.",
+    }),
+    text: textBlock([
+      `${input.invitedByName} invited you to join ${input.workspaceName} on QuoteFlow as ${input.roleLabel}.`,
+      "",
+      input.roleDescription,
+      "",
+      "Accept here:",
+      input.inviteUrl,
+      "",
+      input.hasAccount
+        ? "Sign in with this address to accept."
+        : "You will pick a password when you accept.",
+      `The invitation expires ${input.expiresLabel}.`,
+      "If you were not expecting this, you can ignore it — nothing happens until you accept.",
+    ]),
+  };
+}

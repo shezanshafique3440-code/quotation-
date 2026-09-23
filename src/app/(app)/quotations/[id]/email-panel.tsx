@@ -9,12 +9,14 @@ import { sendQuotationEmailAction } from "@/server/email-actions";
 export function EmailPanel({
   quotationId,
   enabled,
+  senderVerified,
   defaultTo,
   isDraft,
   lastSent,
 }: {
   quotationId: string;
   enabled: boolean;
+  senderVerified: boolean;
   defaultTo: string | null;
   isDraft: boolean;
   lastSent: { toEmail: string; sentAtLabel: string } | null;
@@ -29,6 +31,18 @@ export function EmailPanel({
           This deployment has no email provider, so QuoteFlow cannot send anything. Copy the share
           link above and send it yourself, or ask your administrator to set{" "}
           <code>EMAIL_PROVIDER</code> and <code>EMAIL_FROM</code>.
+        </Alert>
+      </div>
+    );
+  }
+
+  if (!senderVerified) {
+    return (
+      <div className="px-5 py-4">
+        <Alert tone="warning" title="Confirm your email address first">
+          QuoteFlow will not email customers from an unconfirmed address. Use the banner at the top
+          of the page to send yourself a confirmation link, then come back. The share link above
+          works now if you would rather send it yourself.
         </Alert>
       </div>
     );

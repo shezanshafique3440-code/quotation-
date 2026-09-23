@@ -4,7 +4,13 @@ import { SignInForm } from "./form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
-export default function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ reset?: string }>;
+}) {
+  const { reset } = await searchParams;
+
   return (
     <div className="card p-6 sm:p-8">
       <h1 className="text-xl font-semibold tracking-tight">Sign in</h1>
@@ -12,7 +18,7 @@ export default function SignInPage() {
         Welcome back. Pick up where you left off.
       </p>
       <div className="mt-6">
-        <SignInForm />
+        <SignInForm justReset={reset === "1"} />
       </div>
       <p className="mt-6 text-sm text-[var(--color-ink-muted)]">
         New here?{" "}

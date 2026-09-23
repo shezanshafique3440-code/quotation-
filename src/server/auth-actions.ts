@@ -18,8 +18,44 @@ import {
   getSession,
   setSessionCookie,
 } from "@/lib/session";
+import { issueAuthToken } from "@/lib/auth-tokens";
+import { isEmailConfigured } from "@/lib/env";
+import { sendVerificationEmail } from "@/lib/notifications";
 import { fieldErrors, signInSchema, signUpSchema } from "@/lib/validation";
 import { authenticate, registerAccount } from "./accounts";
+
+/**
+ * Send the address-verification link, best effort.
+ *
+ * A provider outage must not block someone from reaching the workspace they
+ * just created, so a failure here is logged and the banner in the app offers a
+ * re-send. Nothing marks the address verified either way.
+ */
+async function sendVerificationOnSignUp(account: {
+  userId: string;
+  organizationId: string;
+  email: string;
+  name: string;
+}): Promise<void> {
+  if (!isEmailConfigured()) return;
+
+  try {
+    const issued = await issueAuthToken(account.userId, "email_verification");
+    const outcome = await sendVerificationEmail({
+      organizationId: account.organizationId,
+      userId: account.userId,
+      to: account.email,
+      name: account.name,
+      url: issued.url,
+      expiresAt: issued.expiresAt,
+    });
+    if (!outcome.ok) {
+      console.warn("[auth] verification email not sent", outcome.error ?? outcome.reason);
+    }
+  } catch (error) {
+    console.error("[auth] verification email failed", error);
+  }
+}
 
 export async function signUpAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const parsed = signUpSchema.safeParse({
@@ -48,6 +84,13 @@ export async function signUpAction(_prev: ActionState, formData: FormData): Prom
       actorLabel: parsed.data.name,
       ipHash: clientIpHash(headerBag),
       userAgent: userAgent(headerBag),
+    });
+
+    await sendVerificationOnSignUp({
+      userId: account.userId,
+      organizationId: account.organizationId,
+      email: parsed.data.email,
+      name: parsed.data.name,
     });
 
     const { token, expiresAt } = await createSession(account.userId, account.organizationId);

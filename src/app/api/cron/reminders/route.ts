@@ -3,7 +3,9 @@ import { jsonError } from "@/lib/api";
 import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { AppError, NotConfiguredError } from "@/lib/errors";
+import { pruneAuthTokens } from "@/lib/auth-tokens";
 import { expireLapsedQuotations } from "@/lib/follow-ups";
+import { pruneInvitations } from "@/lib/invitations";
 import { sendFollowUpDigests } from "@/lib/notifications";
 import { pruneRateLimits } from "@/lib/rate-limit";
 import { safeEquals } from "@/lib/session";
@@ -22,6 +24,9 @@ export const dynamic = "force-dynamic";
  *      provider actually accepted, and `digestsSkipped` says why the rest
  *      were not sent;
  *   3. returns the follow-ups that are now due, so the caller can act.
+ *
+ * It also prunes spent credentials: rate-limit windows, used or long-expired
+ * auth tokens, and invitations nobody accepted.
  *
  * The digest goes to the workspace owner, never to their customers: QuoteFlow
  * does not chase anyone on a business's behalf.
@@ -46,6 +51,9 @@ async function handle(request: Request) {
   // owner can see why a quotation moved without anyone touching it.
   const expired = await expireLapsedQuotations(now);
   const prunedRateLimits = await pruneRateLimits(now);
+  // Spent and long-expired credentials are dead weight; nothing reads them.
+  const prunedAuthTokens = await pruneAuthTokens(now);
+  const prunedInvitations = await pruneInvitations(now);
 
   // Expiry runs first, so a quotation that lapsed today is not also chased.
   const digests = await sendFollowUpDigests(now);
@@ -74,6 +82,8 @@ async function handle(request: Request) {
     ranAt: now.toISOString(),
     quotationsExpired: expired.expired,
     rateLimitRowsPruned: prunedRateLimits,
+    authTokensPruned: prunedAuthTokens,
+    invitationsPruned: prunedInvitations,
     // Digests are only counted as sent when a provider accepted them.
     digestsSent: digests.filter((d) => d.sent).length,
     digestsSkipped: digests

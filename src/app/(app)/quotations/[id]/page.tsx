@@ -76,6 +76,15 @@ export default async function QuotationDetailPage({
     select: { toEmail: true, sentAt: true },
   });
 
+  // Emailing customers requires a confirmed sender address; where email is
+  // unconfigured there is nothing to confirm, so the panel's "not configured"
+  // message is the one that applies.
+  const account = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { emailVerifiedAt: true },
+  });
+  const senderVerified = !isEmailConfigured() || Boolean(account?.emailVerifiedAt);
+
   const whatsappMessage = buildQuotationMessage(quotation, {
     legalName: profile.legalName,
     locale: profile.locale,
@@ -252,6 +261,7 @@ export default async function QuotationDetailPage({
         <EmailPanel
           quotationId={quotation.id}
           enabled={isEmailConfigured()}
+          senderVerified={senderVerified}
           defaultTo={quotation.customer.email}
           isDraft={status === "draft"}
           lastSent={

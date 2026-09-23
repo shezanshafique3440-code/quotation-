@@ -33,10 +33,16 @@ export default async function CustomerDetailPage({
   });
   if (!customer) notFound();
 
-  const [timeline, portal] = await Promise.all([
+  const [timeline, portal, account] = await Promise.all([
     customerTimeline(session.organizationId, customer.id),
     hasActivePortalLink(session.organizationId, customer.id),
+    prisma.user.findUnique({
+      where: { id: session.userId },
+      select: { emailVerifiedAt: true },
+    }),
   ]);
+
+  const senderVerified = !isEmailConfigured() || Boolean(account?.emailVerifiedAt);
 
   return (
     <>
@@ -65,6 +71,7 @@ export default async function CustomerDetailPage({
           hasActiveLink={portal.active}
           expiresLabel={portal.expiresAt ? fmt.date(portal.expiresAt) : null}
           emailEnabled={isEmailConfigured()}
+          senderVerified={senderVerified}
           customerEmail={customer.email}
         />
       </Card>

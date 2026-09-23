@@ -21,6 +21,9 @@ export interface RateLimitResult {
 export const RATE_LIMITS = {
   signIn: { limit: 10, windowMs: 15 * 60_000 },
   signUp: { limit: 5, windowMs: 60 * 60_000 },
+  passwordReset: { limit: 5, windowMs: 60 * 60_000 },
+  emailVerification: { limit: 5, windowMs: 60 * 60_000 },
+  invite: { limit: 30, windowMs: 60 * 60_000 },
   publicView: { limit: 120, windowMs: 60_000 },
   publicRespond: { limit: 10, windowMs: 60 * 60_000 },
   portalAccess: { limit: 60, windowMs: 60_000 },

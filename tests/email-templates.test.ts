@@ -3,8 +3,11 @@ import {
   escapeHtml,
   renderDecisionEmail,
   renderFollowUpDigest,
+  renderInvitationEmail,
+  renderPasswordResetEmail,
   renderPortalEmail,
   renderQuotationEmail,
+  renderVerifyEmail,
   renderViewedEmail,
   type EmailBranding,
 } from "@/lib/email-templates";
@@ -223,5 +226,99 @@ describe("renderPortalEmail", () => {
       expiresLabel: "20 Mar 2027",
     });
     expect(email.text).toMatch(/anyone with the link/i);
+  });
+});
+
+describe("renderPasswordResetEmail", () => {
+  const input = {
+    name: "Sam Rivera",
+    resetUrl: "https://app.example.com/reset-password/tok",
+    expiresLabel: "at 21 Sept 2026, 11:00",
+  };
+
+  it("carries the link in both parts", () => {
+    const email = renderPasswordResetEmail(input);
+    expect(email.html).toContain(input.resetUrl);
+    expect(email.text).toContain(input.resetUrl);
+  });
+
+  it("is branded as QuoteFlow, not as a tenant", () => {
+    const email = renderPasswordResetEmail(input);
+    expect(email.subject).toMatch(/QuoteFlow/);
+    expect(email.html).not.toMatch(/Northline/);
+  });
+
+  it("says what happens if the request was not theirs", () => {
+    const email = renderPasswordResetEmail(input);
+    expect(email.html).toMatch(/your password is unchanged/i);
+    expect(email.text).toMatch(/your password is unchanged/i);
+  });
+
+  it("warns that using it signs them out everywhere", () => {
+    expect(renderPasswordResetEmail(input).text).toMatch(/signs you out everywhere/i);
+  });
+
+  it("escapes a name that contains markup", () => {
+    const email = renderPasswordResetEmail({ ...input, name: '<img src=x onerror="alert(1)">' });
+    expect(email.html).not.toContain("<img");
+    expect(email.html).toContain("&lt;img");
+  });
+});
+
+describe("renderVerifyEmail", () => {
+  const input = {
+    name: "Sam Rivera",
+    verifyUrl: "https://app.example.com/verify-email/tok",
+    expiresLabel: "24 Sept 2026, 10:00",
+  };
+
+  it("carries the link and the deadline", () => {
+    const email = renderVerifyEmail(input);
+    expect(email.html).toContain(input.verifyUrl);
+    expect(email.text).toContain("24 Sept 2026, 10:00");
+  });
+
+  it("explains why confirming matters", () => {
+    expect(renderVerifyEmail(input).text).toMatch(/email quotations on your behalf/i);
+  });
+});
+
+describe("renderInvitationEmail", () => {
+  const input = {
+    branding,
+    workspaceName: "Northline Joinery Ltd",
+    invitedByName: "Sam Rivera",
+    roleLabel: "Member",
+    roleDescription: "Quotes, customers, catalog and follow-ups.",
+    inviteUrl: "https://app.example.com/invite/tok",
+    expiresLabel: "6 Oct 2026",
+    hasAccount: false,
+  };
+
+  it("names the workspace, the inviter and the role", () => {
+    const email = renderInvitationEmail(input);
+    expect(email.subject).toBe("Sam Rivera invited you to Northline Joinery Ltd on QuoteFlow");
+    expect(email.html).toContain("Northline Joinery Ltd");
+    expect(email.text).toContain("Member");
+  });
+
+  it("tells a newcomer they will pick a password", () => {
+    const email = renderInvitationEmail(input);
+    expect(email.text).toMatch(/pick a password/i);
+  });
+
+  it("tells an existing account to sign in instead", () => {
+    const email = renderInvitationEmail({ ...input, hasAccount: true });
+    expect(email.text).toMatch(/sign in with this address/i);
+    expect(email.text).not.toMatch(/pick a password/i);
+  });
+
+  it("promises that nothing happens until they accept", () => {
+    expect(renderInvitationEmail(input).text).toMatch(/nothing happens until you accept/i);
+  });
+
+  it("escapes an inviter name containing markup", () => {
+    const email = renderInvitationEmail({ ...input, invitedByName: "<script>x</script>" });
+    expect(email.html).not.toContain("<script>");
   });
 });

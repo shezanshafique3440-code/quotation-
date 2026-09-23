@@ -22,6 +22,8 @@ Built with Next.js 15 (App Router), TypeScript, Prisma and Tailwind CSS v4.
 | **Quotations** | Line items, per-line tax, document discount, server-computed totals, per-tenant numbering (`QT-2026-0001`). |
 | **WhatsApp** | Generates the message text and a `wa.me` click-to-chat link. QuoteFlow never sends anything itself. |
 | **Email** | Sends the quotation to the customer, and notifies you when they open or answer it. Resend or any SMTP server; every attempt is recorded with the provider's own id or its error. |
+| **Accounts** | Password reset and email confirmation over emailed one-time links. Only a hash of each link is stored, and a reset signs the account out everywhere. |
+| **Teammates** | Invite people by email as Admin or Member, change roles, remove access. Seats are metered against the plan, pending invitations included. |
 | **PDF export** | A typeset A4 document with your business details, tax breakdown, notes and terms. |
 | **Status tracking** | `draft → sent → accepted / rejected / expired`, with transitions enforced server-side. |
 | **Shareable quote pages** | A private, branded link per quotation at `/q/<token>`, revocable and replaceable. Never indexed. |
@@ -58,6 +60,15 @@ Built with Next.js 15 (App Router), TypeScript, Prisma and Tailwind CSS v4.
   to *you*. QuoteFlow contacts a customer only when you press send.
 - **It offers no dead buttons.** With no provider configured, the email panel
   says email is not set up and points you at the share link instead.
+- **It does not leak which addresses are registered.** "Forgot password" gives
+  the same answer for every address, and sends nothing for one it does not know.
+- **A confirmed address means a person clicked.** The confirmation link is a
+  button, not a bare GET, so a mail scanner following URLs in the message
+  cannot confirm an address on someone's behalf.
+- **It will not email customers from an unconfirmed address.** Otherwise anyone
+  could sign up as someone else and borrow the deployment's sending reputation.
+- **Removing a teammate takes effect immediately.** Membership is re-checked on
+  every request, so their next click is a sign-in page — not at session expiry.
 - **AI prices are not trusted.** Any line referencing a catalog product is
   repriced from the database; lines it cannot validate are dropped and reported.
   The follow-up drafter is instructed never to state a price, offer a discount,
@@ -203,6 +214,49 @@ Limits are checked *before* the work starts, so an over-limit request never
 spends a model call it cannot save. Counters reset at the first instant of each
 UTC calendar month.
 
+Seats are the exception to the monthly reset: they are a standing count of
+members plus live invitations, so an invitation is a seat the moment it is
+sent. Accepting is re-checked against the plan too, because a workspace can
+fill up between an invitation going out and the link being followed.
+
+---
+
+## Roles
+
+| | Owner | Admin | Member |
+| --- | --- | --- | --- |
+| Quotations, customers, catalog, follow-ups | yes | yes | yes |
+| Business profile and branding | yes | yes | — |
+| Invite, re-role and remove teammates | yes | yes | — |
+| Billing and plan changes | yes | — | — |
+
+Day-to-day work is open to everybody: a teammate who cannot quote is not a
+teammate. Roles govern the workspace itself rather than the work in it.
+
+An admin can manage members but not other admins or the owner, so one admin
+cannot quietly remove the people who could undo it. A workspace always keeps at
+least one owner, and an invitation never grants ownership — only an existing
+owner can promote someone.
+
+---
+
+## Accounts
+
+- **Password reset** — `/forgot-password` emails a one-time link valid for an
+  hour. Using it replaces the password, destroys every session for that account
+  and drops any other outstanding link.
+- **Email confirmation** — sent on sign-up, valid 48 hours, re-sendable from the
+  banner in the app. Someone who joins through an invitation is confirmed by
+  following that link, so they are never asked twice.
+- **Invitations** — valid 14 days, addressed to one email, and accepted only by
+  an account with that address. Re-sending replaces the link (only a hash is
+  kept, so the old one cannot be shown again) and says so.
+
+All three store only an HMAC of the token, so the raw link exists once — in the
+message that was sent. With no email provider configured, password reset and
+confirmation say so plainly instead of offering a form that cannot work, and
+invitations still generate a link for you to pass on yourself.
+
 ---
 
 ## Architecture
@@ -210,7 +264,10 @@ UTC calendar month.
 ```
 src/
   app/
-    (auth)/            sign-in, sign-up
+    (auth)/            sign-in, sign-up, forgot-password
+    invite/            accept a workspace invitation
+    reset-password/    choose a new password from an emailed link
+    verify-email/      confirm an address from an emailed link
     (app)/             dashboard, inquiries, quotations, customers,
                        products, reminders, settings
     api/               pdf export, stripe webhook, cron, health
@@ -282,7 +339,7 @@ Those panels derive their state from the action result instead.
 npm test
 ```
 
-350+ tests across 29 files. Unit tests cover the money engine, the currency
+430+ tests across 33 files. Unit tests cover the money engine, the currency
 registry and its minor units, timezone arithmetic across DST, plan metering,
 validation schemas, password hashing, branding contrast, WhatsApp rendering,
 form parsing, request/bot classification and the AI-draft mapping.
@@ -292,8 +349,10 @@ schema and cover registration, authentication, sessions, quotation numbering,
 tenant isolation, usage limits, Stripe webhook handling, PDF generation, the
 share-link lifecycle, customer responses and signatures, portal links, template
 CRUD, automatic follow-ups, quote expiry, rate limiting, the activity log,
-analytics, and the email layer: delivery recording, failure handling, tenant
-isolation on sends, notification preferences and digest de-duplication.
+analytics, the email layer (delivery recording, failure handling, tenant
+isolation on sends, notification preferences, digest de-duplication), and
+accounts: one-time link issue/consume races, password reset and its session
+sweep, the role matrix, invitation seats and tenant isolation on membership.
 
 The AI, Stripe and email clients are injected in tests, so the suite never makes
 a network call or opens a socket.

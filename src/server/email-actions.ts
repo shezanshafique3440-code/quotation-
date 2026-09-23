@@ -11,7 +11,7 @@ import {
 import { ACTIVITY_KINDS, recordActivityTx } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { isEmailConfigured } from "@/lib/env";
-import { NotConfiguredError, NotFoundError } from "@/lib/errors";
+import { AppError, NotConfiguredError, NotFoundError } from "@/lib/errors";
 import { scheduleAutoFollowUp } from "@/lib/follow-ups";
 import { text } from "@/lib/form";
 import { issuePortalLink } from "@/lib/portal";
@@ -34,6 +34,28 @@ import {
  * accepted it — so the status never claims something that did not happen. A
  * failed send leaves the quotation exactly as it was.
  */
+/**
+ * Refuse to email customers from an unconfirmed address.
+ *
+ * Without this, anyone could sign up with someone else's address and use the
+ * deployment's reputation to send mail to arbitrary recipients. The check is
+ * skipped where verification is impossible — no provider means no link to
+ * follow, and gating on a step that cannot be completed would lock the feature
+ * shut rather than protect anything.
+ */
+async function requireVerifiedSender(userId: string): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { emailVerifiedAt: true, email: true },
+  });
+  if (user?.emailVerifiedAt) return;
+
+  throw new AppError(
+    `Confirm ${user?.email ?? "your email address"} before emailing customers. Use the banner at the top of the app to send yourself a new confirmation link.`,
+    { status: 403, code: "email_unverified" },
+  );
+}
+
 export async function sendQuotationEmailAction(
   _prev: ActionState,
   formData: FormData,
@@ -46,6 +68,8 @@ export async function sendQuotationEmailAction(
         "Email is not configured on this deployment. Ask your administrator to set EMAIL_PROVIDER and EMAIL_FROM, or share the link yourself.",
       );
     }
+
+    await requireVerifiedSender(session.userId);
 
     const parsed = sendQuotationEmailSchema.safeParse({
       quotationId: text(formData, "quotationId"),
@@ -177,6 +201,8 @@ export async function sendPortalLinkEmailAction(
         "Email is not configured on this deployment. Create the link instead and send it yourself.",
       );
     }
+
+    await requireVerifiedSender(session.userId);
 
     const parsed = sendPortalEmailSchema.safeParse({
       customerId: text(formData, "customerId"),

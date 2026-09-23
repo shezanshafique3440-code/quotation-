@@ -5,6 +5,8 @@ import { hashPassword } from "@/lib/password";
 export async function resetDatabase(): Promise<void> {
   await prisma.rateLimitCounter.deleteMany();
   await prisma.activityEvent.deleteMany();
+  await prisma.authToken.deleteMany();
+  await prisma.invitation.deleteMany();
   await prisma.customerPortalToken.deleteMany();
   await prisma.quotationTemplateItem.deleteMany();
   await prisma.quotationTemplate.deleteMany();
@@ -43,6 +45,7 @@ export async function createWorkspace(
     autoFollowUpDays?: number;
     publicPagesEnabled?: boolean;
     requireSignature?: boolean;
+    emailVerifiedAt?: Date | null;
   } = {},
 ): Promise<Workspace> {
   counter += 1;
@@ -53,6 +56,9 @@ export async function createWorkspace(
       email: `owner${counter}@example.test`,
       name: `Owner ${counter}`,
       passwordHash: await hashPassword("correct-horse-battery"),
+      // Workspace owners in tests are confirmed unless a test says otherwise;
+      // the verification flow has its own suite.
+      emailVerifiedAt: overrides.emailVerifiedAt === undefined ? new Date() : overrides.emailVerifiedAt,
     },
   });
 

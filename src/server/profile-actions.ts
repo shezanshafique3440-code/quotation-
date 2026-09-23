@@ -10,7 +10,9 @@ import {
 } from "@/lib/action-state";
 import { ACTIVITY_KINDS, recordActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
+import { ForbiddenError } from "@/lib/errors";
 import { percentBp, text } from "@/lib/form";
+import { can } from "@/lib/roles";
 import { requireSession } from "@/lib/session";
 import { businessProfileSchema, fieldErrors } from "@/lib/validation";
 
@@ -20,6 +22,10 @@ export async function updateBusinessProfileAction(
 ): Promise<ActionState> {
   try {
     const session = await requireSession();
+    if (!can(session.role, "settings:manage")) {
+      throw new ForbiddenError("Only an owner or admin can change the business profile.");
+    }
+
     const parsed = businessProfileSchema.safeParse({
       legalName: text(formData, "legalName"),
       currency: text(formData, "currency"),

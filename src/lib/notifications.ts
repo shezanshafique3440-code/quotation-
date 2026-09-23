@@ -4,8 +4,11 @@ import { sendEmail, bareAddress, isValidEmailAddress, type EmailMessage } from "
 import {
   renderDecisionEmail,
   renderFollowUpDigest,
+  renderInvitationEmail,
+  renderPasswordResetEmail,
   renderPortalEmail,
   renderQuotationEmail,
+  renderVerifyEmail,
   renderViewedEmail,
   type EmailBranding,
   type RenderedEmail,
@@ -20,7 +23,10 @@ export type EmailKind =
   | "declined"
   | "viewed"
   | "follow_up_digest"
-  | "portal_link";
+  | "portal_link"
+  | "password_reset"
+  | "verify_email"
+  | "invitation";
 
 export interface DeliveryOutcome {
   ok: boolean;
@@ -538,4 +544,104 @@ export async function sendFollowUpDigests(now: Date = new Date()): Promise<Diges
   }
 
   return results;
+}
+
+interface AccountEmailInput {
+  organizationId: string;
+  userId: string;
+  to: string;
+  name: string;
+  url: string;
+  expiresAt: Date;
+}
+
+/**
+ * Email a password-reset link.
+ *
+ * Deliberately product-branded rather than workspace-branded: this is a
+ * QuoteFlow account action, and wearing a tenant's logo would misattribute it.
+ */
+export async function sendPasswordResetEmail(
+  input: AccountEmailInput,
+): Promise<DeliveryOutcome> {
+  const fmt = createFormatter({ locale: "en-US", timezone: "UTC", currency: "USD" });
+  const rendered = renderPasswordResetEmail({
+    name: input.name,
+    resetUrl: input.url,
+    expiresLabel: `at ${fmt.dateTime(input.expiresAt)}`,
+  });
+
+  return deliver({
+    organizationId: input.organizationId,
+    kind: "password_reset",
+    to: input.to,
+    rendered,
+  });
+}
+
+/** Email an address-verification link. Same product branding, same reasons. */
+export async function sendVerificationEmail(
+  input: AccountEmailInput,
+): Promise<DeliveryOutcome> {
+  const fmt = createFormatter({ locale: "en-US", timezone: "UTC", currency: "USD" });
+  const rendered = renderVerifyEmail({
+    name: input.name,
+    verifyUrl: input.url,
+    expiresLabel: fmt.dateTime(input.expiresAt),
+  });
+
+  return deliver({
+    organizationId: input.organizationId,
+    kind: "verify_email",
+    to: input.to,
+    rendered,
+  });
+}
+
+export interface InvitationEmailSendInput {
+  organizationId: string;
+  organizationName: string;
+  to: string;
+  invitedByName: string;
+  roleLabel: string;
+  roleDescription: string;
+  inviteUrl: string;
+  expiresAt: Date;
+  hasAccount: boolean;
+}
+
+/**
+ * Email a workspace invitation.
+ *
+ * This one *is* workspace-branded: the recipient is being asked to join that
+ * business, and recognising it is the point.
+ */
+export async function sendInvitationEmail(
+  input: InvitationEmailSendInput,
+): Promise<DeliveryOutcome> {
+  const context = await emailContext(input.organizationId, input.organizationName);
+  const fmt = createFormatter({
+    locale: context.locale,
+    timezone: context.timezone,
+    currency: context.currency,
+  });
+
+  const rendered = renderInvitationEmail({
+    branding: context.branding,
+    workspaceName: context.branding.businessName,
+    invitedByName: input.invitedByName,
+    roleLabel: input.roleLabel,
+    roleDescription: input.roleDescription,
+    inviteUrl: input.inviteUrl,
+    expiresLabel: fmt.date(input.expiresAt),
+    hasAccount: input.hasAccount,
+  });
+
+  return deliver({
+    organizationId: input.organizationId,
+    kind: "invitation",
+    to: input.to,
+    rendered,
+    replyTo: context.branding.replyTo ? bareAddress(context.branding.replyTo) : undefined,
+  });
 }

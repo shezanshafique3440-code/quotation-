@@ -14,12 +14,14 @@ export function PortalPanel({
   hasActiveLink,
   expiresLabel,
   emailEnabled,
+  senderVerified,
   customerEmail,
 }: {
   customerId: string;
   hasActiveLink: boolean;
   expiresLabel: string | null;
   emailEnabled: boolean;
+  senderVerified: boolean;
   customerEmail: string | null;
 }) {
   const [issueState, issue] = useActionState(issuePortalLinkAction, idleState);
@@ -99,7 +101,17 @@ export function PortalPanel({
         </p>
       ) : null}
 
-      {emailEnabled ? (
+      {emailEnabled && !senderVerified ? (
+        <div className="border-t border-[var(--color-line)] pt-4">
+          <Alert tone="warning" title="Confirm your email address first">
+            QuoteFlow will not email customers from an unconfirmed address. The link above still
+            works — copy it and send it yourself, or confirm your address using the banner at the
+            top of the page.
+          </Alert>
+        </div>
+      ) : null}
+
+      {emailEnabled && senderVerified ? (
         <form action={sendEmail} className="space-y-3 border-t border-[var(--color-line)] pt-4">
           <input type="hidden" name="customerId" value={customerId} />
           <Field
