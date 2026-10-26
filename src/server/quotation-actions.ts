@@ -188,16 +188,41 @@ export async function updateQuotationStatusAction(
     let followUpNote = "";
 
     await prisma.$transaction(async (tx) => {
-      await tx.quotation.update({
-        where: { id },
+      const updated = await tx.quotation.updateMany({
+        // Do not overwrite a customer response that arrived after this action
+        // read the quotation's status.
+        where: { id, organizationId: session.organizationId, status: from },
         data: {
           status: to,
-          sentAt: to === "sent" ? now : undefined,
+          sentAt: to === "sent" ? now : to === "draft" ? null : undefined,
           decidedAt:
             to === "accepted" || to === "rejected" ? now : to === "draft" ? null : undefined,
           decisionSource: to === "accepted" || to === "rejected" ? "internal" : undefined,
+          ...(to === "draft"
+            ? {
+                // A revised draft starts a new response lifecycle. Its old
+                // decisions and views remain in the append-only activity log.
+                decisionSource: null,
+                respondedAt: null,
+                respondedByName: null,
+                rejectionReason: null,
+                signatureName: null,
+                signatureEmail: null,
+                signedAt: null,
+                signatureIpHash: null,
+                firstViewedAt: null,
+                lastViewedAt: null,
+                viewCount: 0,
+              }
+            : {}),
         },
       });
+      if (updated.count === 0) {
+        throw new AppError("This quotation changed while you were updating it. Refresh and try again.", {
+          status: 409,
+          code: "quotation_changed",
+        });
+      }
 
       if (to === "accepted" && quotation.inquiryId) {
         await tx.inquiry.updateMany({
@@ -206,8 +231,9 @@ export async function updateQuotationStatusAction(
         });
       }
 
-      // A decided quotation no longer needs chasing.
-      if (to === "accepted" || to === "rejected") {
+      // Only a sent quotation is eligible for a chase. Drafts and expired
+      // quotations must not retain reminders from the previous sent version.
+      if (to !== "sent") {
         await tx.reminder.updateMany({
           where: { quotationId: id, organizationId: session.organizationId, status: "pending" },
           data: { status: "cancelled" },

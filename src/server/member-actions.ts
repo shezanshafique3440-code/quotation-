@@ -12,12 +12,14 @@ import {
 } from "@/lib/action-state";
 import { prisma } from "@/lib/db";
 import { isEmailConfigured } from "@/lib/env";
-import { AppError, NotConfiguredError } from "@/lib/errors";
+import { AppError } from "@/lib/errors";
 import { text } from "@/lib/form";
 import {
   acceptInvitation,
+  acceptInvitationAsNewUser,
   createInvitation,
   invitationUrl,
+  replaceInvitation,
   resolveInvitation,
   revokeInvitation,
 } from "@/lib/invitations";
@@ -83,12 +85,12 @@ export async function inviteMemberAction(
       actor: { userId: session.userId, label: session.user.name },
     });
 
-    revalidatePath(TEAM_PATH);
-
+    // This result is the only recoverable copy of the link. Revalidating the
+    // current route here can discard useActionState's reply during the render.
     if (!isEmailConfigured()) {
       return successState(
         `Invitation created for ${invitation.email}. This deployment cannot send email, so copy the link below and pass it on yourself.`,
-        { url: invitation.url, email: invitation.email },
+        { url: invitation.url, email: invitation.email, invitationId: invitation.id },
       );
     }
 
@@ -111,14 +113,18 @@ export async function inviteMemberAction(
     });
 
     if (!outcome.ok) {
-      return errorState(
-        `${outcome.error ?? outcome.reason ?? "The invitation email could not be sent."} The invitation itself is valid — copy the link below and send it yourself.`,
-      );
+      return {
+        ...errorState(
+          `${outcome.error ?? outcome.reason ?? "The invitation email could not be sent."} The invitation itself is valid — copy the link below and send it yourself.`,
+        ),
+        data: { url: invitation.url, email: invitation.email, invitationId: invitation.id },
+      };
     }
 
     return successState(`Invitation emailed to ${invitation.email}.`, {
       url: invitation.url,
       email: invitation.email,
+      invitationId: invitation.id,
     });
   } catch (error) {
     if (isFrameworkError(error)) throw error;
@@ -295,19 +301,12 @@ export async function acceptInvitationAsNewUserAction(
     }
 
     const passwordHash = await hashPassword(parsed.data.password);
-    const user = await prisma.user.create({
-      data: {
-        email: invitation.email,
-        name: parsed.data.name,
-        passwordHash,
-        // Following the emailed link proves the address.
-        emailVerifiedAt: new Date(),
-      },
-      select: { id: true },
+    const accepted = await acceptInvitationAsNewUser({
+      token: parsed.data.token,
+      name: parsed.data.name,
+      passwordHash,
     });
-
-    const accepted = await acceptInvitation(parsed.data.token, user.id);
-    joined = { organizationId: accepted.organizationId, userId: user.id };
+    joined = { organizationId: accepted.organizationId, userId: accepted.userId };
   } catch (error) {
     if (isFrameworkError(error)) throw error;
     return toActionState(error);
@@ -325,7 +324,7 @@ export async function acceptInvitationAsNewUserAction(
   return errorState("The invitation could not be accepted.");
 }
 
-/** Re-send an invitation email without minting a new link. */
+/** Replace a lost invitation link and email it when a provider is configured. */
 export async function resendInvitationAction(
   _prev: ActionState,
   formData: FormData,
@@ -333,45 +332,28 @@ export async function resendInvitationAction(
   try {
     const session = await requireMemberManager();
 
-    if (!isEmailConfigured()) {
-      throw new NotConfiguredError(
-        "This deployment cannot send email. Copy the invitation link instead.",
-      );
-    }
-
     const parsed = invitationRefSchema.safeParse({
       invitationId: text(formData, "invitationId"),
     });
     if (!parsed.success) return errorState("That invitation could not be found.");
 
-    // Only the HMAC of the token is stored, so an existing link cannot be
-    // read back. Re-sending therefore means replacing it — which is said
-    // plainly rather than implying the old link still works.
-    const existing = await prisma.invitation.findFirst({
-      where: {
-        id: parsed.data.invitationId,
-        organizationId: session.organizationId,
-        acceptedAt: null,
-        revokedAt: null,
-      },
-      select: { id: true, email: true, role: true },
-    });
-    if (!existing) return errorState("That invitation is no longer pending.");
-
     await enforceRateLimit("invite", `org:${session.organizationId}`);
 
-    await revokeInvitation(session.organizationId, existing.id, {
-      userId: session.userId,
-      label: session.user.name,
-    });
-
-    const invitation = await createInvitation({
+    // The HMAC cannot recover an old link. Replace it atomically, preserving
+    // the previous invitation if a plan limit or database write fails.
+    const invitation = await replaceInvitation({
       organizationId: session.organizationId,
-      plan: session.organization.plan,
-      email: existing.email,
-      role: existing.role === "admin" ? "admin" : "member",
+      invitationId: parsed.data.invitationId,
       actor: { userId: session.userId, label: session.user.name },
     });
+
+    const data = { url: invitation.url, email: invitation.email, invitationId: invitation.id };
+    if (!isEmailConfigured()) {
+      return successState(
+        `A new invitation link was created for ${invitation.email}. The previous link no longer works. Copy the link below and pass it on yourself.`,
+        data,
+      );
+    }
 
     const hasAccount = Boolean(
       await prisma.user.findUnique({ where: { email: invitation.email }, select: { id: true } }),
@@ -390,17 +372,18 @@ export async function resendInvitationAction(
       hasAccount,
     });
 
-    revalidatePath(TEAM_PATH);
-
     if (!outcome.ok) {
-      return errorState(
-        `${outcome.error ?? outcome.reason ?? "The invitation could not be sent."} A fresh link was created — copy it below and send it yourself.`,
-      );
+      return {
+        ...errorState(
+          `${outcome.error ?? outcome.reason ?? "The invitation could not be sent."} A fresh link was created — copy it below and send it yourself.`,
+        ),
+        data,
+      };
     }
 
     return successState(
       `A new invitation was emailed to ${invitation.email}. The previous link no longer works.`,
-      { url: invitation.url, email: invitation.email },
+      data,
     );
   } catch (error) {
     if (isFrameworkError(error)) throw error;

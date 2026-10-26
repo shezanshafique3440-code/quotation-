@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useId, useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert, Field } from "@/components/ui";
 import { idleState, type ActionState } from "@/lib/action-state";
 import { CURRENCIES } from "@/lib/currency";
+import { catalogLineFields, clearForeignCatalogPrice } from "@/lib/catalog-line";
 
 export interface TemplateLine {
   key: string;
@@ -14,6 +15,7 @@ export interface TemplateLine {
   unit: string;
   unitPrice: string;
   taxRate: string;
+  catalogPriceCurrency?: string;
 }
 
 export interface TemplateProduct {
@@ -39,12 +41,9 @@ export interface TemplateValues {
   lines?: Omit<TemplateLine, "key">[];
 }
 
-let seed = 0;
-const nextKey = () => `tline-${(seed += 1)}`;
-
-function blankLine(taxRate: string): TemplateLine {
+function blankLine(taxRate: string, key: string): TemplateLine {
   return {
-    key: nextKey(),
+    key,
     productId: "",
     description: "",
     quantity: "1",
@@ -59,6 +58,7 @@ export function TemplateForm({
   products,
   values = {},
   defaultTaxRateBp,
+  defaultCurrency,
   defaultValidityDays,
   submitLabel,
   resetOnSuccess = false,
@@ -67,18 +67,31 @@ export function TemplateForm({
   products: TemplateProduct[];
   values?: TemplateValues;
   defaultTaxRateBp: number;
+  defaultCurrency: string;
   defaultValidityDays: number;
   submitLabel: string;
   resetOnSuccess?: boolean;
 }) {
   const defaultTaxRate = String(defaultTaxRateBp / 100);
-  const [state, formAction] = useActionState(action, idleState);
+  const formId = useId();
+  const sequence = useRef(Math.max(1, values.lines?.length ?? 0));
+  const newLine = () => blankLine(defaultTaxRate, `${formId}-tline-${sequence.current++}`);
+  const [currency, setCurrency] = useState(values.currency ?? "");
   const [lines, setLines] = useState<TemplateLine[]>(() =>
     (values.lines ?? []).length > 0
-      ? values.lines!.map((line) => ({ ...line, key: nextKey() }))
-      : [blankLine(defaultTaxRate)],
+      ? values.lines!.map((line, index) => ({ ...line, key: `${formId}-tline-${index}` }))
+      : [blankLine(defaultTaxRate, `${formId}-tline-0`)],
   );
 
+  const [state, formAction] = useActionState(async (previous: ActionState, data: FormData) => {
+    const result = await action(previous, data);
+    if (resetOnSuccess && result.status === "success") {
+      setLines([newLine()]);
+      setCurrency(values.currency ?? "");
+    }
+    return result;
+  }, idleState);
+  const activeCurrency = currency || defaultCurrency;
   const errors = state.fieldErrors ?? {};
   const suffix = values.id ?? "new";
   const resetKey = resetOnSuccess && state.status === "success" ? (state.message ?? "done") : "form";
@@ -89,16 +102,10 @@ export function TemplateForm({
   const applyProduct = (key: string, productId: string) => {
     const product = products.find((p) => p.id === productId);
     if (!product) {
-      update(key, { productId: "" });
+      update(key, { productId: "", catalogPriceCurrency: undefined });
       return;
     }
-    update(key, {
-      productId,
-      description: product.description?.trim() || product.name,
-      unit: product.unit,
-      unitPrice: (product.unitPriceCents / 100).toFixed(2),
-      taxRate: String(product.taxRateBp / 100),
-    });
+    update(key, catalogLineFields(product, defaultCurrency, activeCurrency));
   };
 
   return (
@@ -160,7 +167,12 @@ export function TemplateForm({
             id={`currency-${suffix}`}
             name="currency"
             className="input"
-            defaultValue={values.currency ?? ""}
+            value={currency}
+            onChange={(event) => {
+              const next = event.target.value;
+              setCurrency(next);
+              setLines((current) => current.map((line) => clearForeignCatalogPrice(line, next || defaultCurrency)));
+            }}
           >
             <option value="">Workspace default</option>
             {CURRENCIES.map((currency) => (
@@ -208,7 +220,7 @@ export function TemplateForm({
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => setLines((c) => [...c, blankLine(defaultTaxRate)])}
+            onClick={() => setLines((c) => [...c, newLine()])}
           >
             Add line
           </button>
@@ -217,6 +229,13 @@ export function TemplateForm({
         {errors.items ? (
           <p className="mb-2 text-xs text-[var(--color-danger)]" role="alert">
             {errors.items}
+          </p>
+        ) : null}
+
+        {activeCurrency !== defaultCurrency ? (
+          <p className="mb-3 text-sm text-[var(--color-ink-muted)]">
+            Catalog prices are in {defaultCurrency}. Enter prices in {activeCurrency} yourself;
+            no currency conversion is applied.
           </p>
         ) : null}
 
@@ -276,7 +295,7 @@ export function TemplateForm({
                     required
                     aria-label={`Unit price for line ${index + 1}`}
                     value={line.unitPrice}
-                    onChange={(event) => update(line.key, { unitPrice: event.target.value })}
+                    onChange={(event) => update(line.key, { unitPrice: event.target.value, catalogPriceCurrency: undefined })}
                   />
                   <input
                     name="item-tax-rate"
@@ -295,7 +314,7 @@ export function TemplateForm({
                   className="btn btn-ghost"
                   onClick={() =>
                     setLines((c) =>
-                      c.length === 1 ? [blankLine(defaultTaxRate)] : c.filter((l) => l.key !== line.key),
+                      c.length === 1 ? [newLine()] : c.filter((l) => l.key !== line.key),
                     )
                   }
                 >

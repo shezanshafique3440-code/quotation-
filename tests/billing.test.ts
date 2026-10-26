@@ -82,7 +82,7 @@ describe("applyStripeEvent", () => {
       event("customer.subscription.updated", {
         id: "sub_1",
         status: "active",
-        current_period_end: 1_800_000_000,
+        items: { data: [{ id: "si_pro", current_period_end: 1_800_000_000 }] },
         metadata: { organizationId: workspace.organizationId },
       }),
     );
@@ -90,6 +90,22 @@ describe("applyStripeEvent", () => {
       where: { id: workspace.organizationId },
     });
     expect(organization.plan).toBe("pro");
+    expect(organization.planRenewsAt?.getTime()).toBe(1_800_000_000_000);
+  });
+
+  it("uses the next renewal across subscription item billing periods", async () => {
+    const workspace = await createWorkspace({ plan: "pro" });
+    await applyStripeEvent(event("customer.subscription.updated", {
+      id: "sub_1",
+      status: "active",
+      metadata: { organizationId: workspace.organizationId },
+      items: { data: [
+        { id: "si_later", current_period_end: 1_900_000_000 },
+        { id: "si_earlier", current_period_end: 1_800_000_000 },
+      ] },
+    }));
+
+    const organization = await prisma.organization.findUniqueOrThrow({ where: { id: workspace.organizationId } });
     expect(organization.planRenewsAt?.getTime()).toBe(1_800_000_000_000);
   });
 

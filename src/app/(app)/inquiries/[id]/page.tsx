@@ -13,7 +13,6 @@ import {
 } from "@/lib/constants";
 import { prisma } from "@/lib/db";
 import { isAiConfigured } from "@/lib/env";
-import { formatDateTime } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { requireTenant } from "@/lib/tenant";
 import { deleteInquiryAction, updateInquiryStatusAction } from "@/server/inquiry-actions";
@@ -23,7 +22,7 @@ export const metadata: Metadata = { title: "Inquiry" };
 
 export default async function InquiryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { session, profile } = await requireTenant();
+  const { session, profile, fmt } = await requireTenant();
 
   const inquiry = await prisma.inquiry.findFirst({
     where: { id, organizationId: session.organizationId },
@@ -40,7 +39,7 @@ export default async function InquiryDetailPage({ params }: { params: Promise<{ 
     <>
       <PageHeader
         title={inquiry.subject}
-        description={`${inquiry.customer.name} · ${INQUIRY_CHANNEL_LABELS[inquiry.channel as InquiryChannel] ?? inquiry.channel} · ${formatDateTime(inquiry.receivedAt, profile.locale)}`}
+        description={`${inquiry.customer.name} · ${INQUIRY_CHANNEL_LABELS[inquiry.channel as InquiryChannel] ?? inquiry.channel} · ${fmt.dateTime(inquiry.receivedAt)}`}
         action={
           <Link href="/inquiries" className="btn btn-secondary">
             All inquiries

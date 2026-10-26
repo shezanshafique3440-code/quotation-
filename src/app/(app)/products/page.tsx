@@ -97,7 +97,7 @@ export default async function ProductsPage() {
                         name: product.name,
                         sku: product.sku,
                         description: product.description,
-                        unitPrice: centsToInput(product.unitPriceCents),
+                        unitPrice: centsToInput(product.unitPriceCents, profile.currency),
                         unit: product.unit,
                         taxRate: bpToInput(product.taxRateBp),
                         active: product.active,

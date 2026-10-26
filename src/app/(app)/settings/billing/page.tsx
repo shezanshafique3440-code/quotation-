@@ -3,9 +3,9 @@ import { ConfirmForm } from "@/components/confirm-form";
 import { Alert, Badge, Card, CardHeader, PageHeader } from "@/components/ui";
 import { prisma } from "@/lib/db";
 import { isAiConfigured, isBillingConfigured, isEmailConfigured } from "@/lib/env";
-import { formatDate } from "@/lib/format";
 import { PLAN_LABELS, PLAN_LIMITS } from "@/lib/plans";
 import { requireTenant } from "@/lib/tenant";
+import { can } from "@/lib/roles";
 import { getUsage } from "@/lib/usage";
 import { openBillingPortalAction, startCheckoutAction } from "@/server/billing-actions";
 
@@ -17,7 +17,7 @@ export default async function BillingPage({
   searchParams: Promise<{ checkout?: string }>;
 }) {
   const { checkout } = await searchParams;
-  const { session, profile } = await requireTenant();
+  const { session, profile, fmt } = await requireTenant();
 
   const [usage, organization] = await Promise.all([
     getUsage(session.organizationId),
@@ -29,7 +29,7 @@ export default async function BillingPage({
 
   const billingEnabled = isBillingConfigured();
   const isPro = organization.plan === "pro";
-  const canManage = session.role === "owner" || session.role === "admin";
+  const canManage = can(session.role, "billing:manage");
 
   return (
     <>
@@ -53,7 +53,7 @@ export default async function BillingPage({
           title="Current plan"
           description={
             organization.planRenewsAt
-              ? `Renews ${formatDate(organization.planRenewsAt, profile.locale)}`
+              ? `Renews ${fmt.date(organization.planRenewsAt)}`
               : undefined
           }
           action={<Badge tone={isPro ? "positive" : "neutral"}>{organization.planStatus}</Badge>}
@@ -79,7 +79,7 @@ export default async function BillingPage({
           </dl>
           <p className="text-xs text-[var(--color-ink-subtle)]">
             Monthly counters reset at the start of each UTC calendar month —{" "}
-            {formatDate(usage.periodEnd, profile.locale)}.
+            {fmt.dateTime(usage.periodEnd)}.
           </p>
         </div>
       </Card>
@@ -95,7 +95,7 @@ export default async function BillingPage({
               Plans can also be changed directly in the database for self-hosted installs.
             </Alert>
           ) : !canManage ? (
-            <Alert tone="warning">Only workspace owners and admins can change the plan.</Alert>
+            <Alert tone="warning">Only workspace owners can change the plan.</Alert>
           ) : isPro ? (
             <>
               <p className="text-sm text-[var(--color-ink-muted)]">

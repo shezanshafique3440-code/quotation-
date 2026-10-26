@@ -109,7 +109,12 @@ export async function applyStripeEvent(event: Stripe.Event): Promise<{ handled: 
       if (!organizationId) return { handled: false };
 
       const active = subscription.status === "active" || subscription.status === "trialing";
-      const periodEnd = (subscription as unknown as { current_period_end?: number }).current_period_end;
+      // Current Stripe API versions attach billing periods to subscription
+      // items. A subscription renews when its earliest item period ends.
+      const itemPeriodEnds = (subscription.items?.data ?? [])
+        .map((item) => item.current_period_end)
+        .filter((end) => Number.isFinite(end) && end > 0);
+      const periodEnd = itemPeriodEnds.length > 0 ? Math.min(...itemPeriodEnds) : null;
 
       await prisma.organization.update({
         where: { id: organizationId },

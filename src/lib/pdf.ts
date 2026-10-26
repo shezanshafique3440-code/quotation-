@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { hexToUnitRgb } from "./branding";
 import { formatBp, formatDecimal } from "./money";
+import { formatDate } from "./format";
 import type { QuotationWithRelations } from "./quotations";
 
 const A4 = { width: 595.28, height: 841.89 };
@@ -21,6 +22,7 @@ export interface PdfBusiness {
   country?: string | null;
   taxId?: string | null;
   locale: string;
+  timezone?: string;
   /** Workspace brand colour, used for the document accent. */
   brandColor?: string | null;
 }
@@ -69,14 +71,6 @@ function wrap(text: string, font: PDFFont, size: number, maxWidth: number): stri
     out.push(line);
   }
   return out;
-}
-
-function formatDate(date: Date, locale: string): string {
-  try {
-    return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(date);
-  } catch {
-    return date.toISOString().slice(0, 10);
-  }
 }
 
 interface Ctx {
@@ -150,8 +144,8 @@ export async function renderQuotationPdf(
 
   const metaLines = [
     `No. ${quotation.number}`,
-    `Issued ${formatDate(quotation.createdAt, business.locale)}`,
-    quotation.validUntil ? `Valid until ${formatDate(quotation.validUntil, business.locale)}` : null,
+    `Issued ${formatDate(quotation.createdAt, business.locale, business.timezone)}`,
+    quotation.validUntil ? `Valid until ${formatDate(quotation.validUntil, business.locale, business.timezone)}` : null,
     `Currency ${quotation.currency}`,
   ].filter((l): l is string => Boolean(l));
 
@@ -277,7 +271,7 @@ export async function renderQuotationPdf(
 
     const record: string[] = [];
     if (quotation.respondedByName) record.push(`By: ${quotation.respondedByName}`);
-    record.push(`On: ${formatDate(quotation.respondedAt, business.locale)}`);
+    record.push(`On: ${formatDate(quotation.respondedAt, business.locale, business.timezone)}`);
     if (quotation.decisionSource === "public_page") record.push("Via: online quote page");
     if (accepted && quotation.signatureName) {
       record.push(`Signed: ${quotation.signatureName} (typed electronic signature)`);
@@ -289,6 +283,7 @@ export async function renderQuotationPdf(
 
     for (const line of record) {
       for (const wrapped of wrap(line, ctx.regular, 9, contentWidth)) {
+        ensureSpace(ctx, 12);
         drawText(ctx, wrapped, MARGIN, 9);
         ctx.y -= 12;
       }
@@ -302,11 +297,12 @@ export async function renderQuotationPdf(
   ] as const) {
     if (!body?.trim()) continue;
     const bodyLines = wrap(body.trim(), ctx.regular, 9, contentWidth);
-    ensureSpace(ctx, bodyLines.length * 12 + 30);
+    ensureSpace(ctx, 42);
     ctx.y -= 14;
     drawText(ctx, heading.toUpperCase(), MARGIN, 8, { bold: true, color: MUTED });
     ctx.y -= 14;
     for (const line of bodyLines) {
+      ensureSpace(ctx, 12);
       drawText(ctx, line, MARGIN, 9);
       ctx.y -= 12;
     }

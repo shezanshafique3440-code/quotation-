@@ -10,8 +10,9 @@ import {
 } from "@/lib/action-state";
 import { ACTIVITY_KINDS, recordActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
-import { ForbiddenError } from "@/lib/errors";
+import { AppError, ForbiddenError } from "@/lib/errors";
 import { percentBp, text } from "@/lib/form";
+import { limitsFor } from "@/lib/plans";
 import { can } from "@/lib/roles";
 import { requireSession } from "@/lib/session";
 import { businessProfileSchema, fieldErrors } from "@/lib/validation";
@@ -83,17 +84,48 @@ export async function updateBusinessProfileAction(
       notifyEmail: parsed.data.notifyEmail ?? null,
     };
 
-    await prisma.$transaction([
-      prisma.businessProfile.upsert({
+    await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.findUniqueOrThrow({
+        where: { id: session.organizationId },
+        select: { plan: true },
+      });
+      const current = await tx.businessProfile.findUnique({ where: { organizationId: session.organizationId } });
+      const branding = {
+        logoUrl: current?.logoUrl ?? null,
+        brandColor: current?.brandColor ?? "#4B3DDB",
+        portalHeadline: current?.portalHeadline ?? null,
+        portalMessage: current?.portalMessage ?? null,
+      };
+      const brandingFields = Object.keys(branding) as (keyof typeof branding)[];
+      // Disabled controls are absent from FormData. Keep existing branding so
+      // downgrading never makes an unrelated profile save erase it.
+      for (const field of brandingFields) {
+        if (!formData.has(field)) Object.assign(data, { [field]: branding[field] });
+      }
+      const changesBranding = brandingFields.some((field) => field === "brandColor"
+        ? data.brandColor.toLowerCase() !== branding.brandColor.toLowerCase()
+        : data[field] !== branding[field]);
+      if (changesBranding && !limitsFor(organization.plan).customBranding) {
+        throw new ForbiddenError("Custom branding is included with Pro. Upgrade to change your logo, brand colour or portal copy.");
+      }
+      if (data.currency !== (current?.currency ?? "USD") &&
+          await tx.product.count({ where: { organizationId: session.organizationId } }) > 0) {
+        throw new AppError("Your catalog prices use the current currency. Remove the catalog products before changing currency, then recreate them with prices in the new currency.", {
+          status: 409,
+          code: "catalog_currency_conflict",
+        });
+      }
+
+      await tx.businessProfile.upsert({
         where: { organizationId: session.organizationId },
         create: { organizationId: session.organizationId, ...data },
         update: data,
-      }),
-      prisma.organization.update({
+      });
+      await tx.organization.update({
         where: { id: session.organizationId },
         data: { name: parsed.data.legalName },
-      }),
-    ]);
+      });
+    });
 
     await recordActivity({
       organizationId: session.organizationId,

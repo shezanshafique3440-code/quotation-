@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ListSearch, Pagination } from "@/components/list-controls";
 import { Badge, Card, CardHeader, EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import { QUOTATION_STATUSES, QUOTATION_STATUS_LABELS, type QuotationStatus } from "@/lib/constants";
-import { prisma } from "@/lib/db";
-import { formatDate } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
+import { listHref, parseListQuery, type ListSearchParams } from "@/lib/pagination";
+import { listQuotations } from "@/lib/records";
 import { requireTenant } from "@/lib/tenant";
 
 export const metadata: Metadata = { title: "Quotations" };
@@ -17,35 +18,18 @@ const STATUS_TONE: Record<QuotationStatus, "neutral" | "brand" | "positive" | "w
   expired: "warning",
 };
 
-function isStatus(value: string | undefined): value is QuotationStatus {
-  return value !== undefined && (QUOTATION_STATUSES as readonly string[]).includes(value);
-}
-
 export default async function QuotationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<ListSearchParams & { status?: string | string[] }>;
 }) {
-  const { status } = await searchParams;
-  const { session, profile } = await requireTenant();
-  const filter = isStatus(status) ? status : undefined;
-
-  const [quotations, groups] = await Promise.all([
-    prisma.quotation.findMany({
-      where: { organizationId: session.organizationId, ...(filter ? { status: filter } : {}) },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-      include: { customer: { select: { name: true } } },
-    }),
-    prisma.quotation.groupBy({
-      by: ["status"],
-      where: { organizationId: session.organizationId },
-      _count: { _all: true },
-    }),
-  ]);
-
-  const counts = new Map(groups.map((g) => [g.status, g._count._all]));
-  const total = groups.reduce((sum, g) => sum + g._count._all, 0);
+  const params = await searchParams;
+  const { query, page } = parseListQuery(params);
+  const { session, profile, fmt } = await requireTenant();
+  const { rows: quotations, pagination, counts, total, status: filter } = await listQuotations(
+    session.organizationId,
+    { query, page, status: typeof params.status === "string" ? params.status : undefined },
+  );
 
   return (
     <>
@@ -55,9 +39,18 @@ export default async function QuotationsPage({
         action={<LinkButton href="/quotations/new" variant="primary">New quotation</LinkButton>}
       />
 
+      <ListSearch
+        pathname="/quotations"
+        query={query}
+        filters={{ status: filter }}
+        label="Search quotations"
+        placeholder="Quotation number, title or customer"
+      />
+
       <nav className="flex flex-wrap gap-2" aria-label="Filter by status">
         <Link
-          href="/quotations"
+          href={listHref("/quotations", { q: query })}
+          aria-current={filter === undefined ? "page" : undefined}
           className={`btn ${filter === undefined ? "btn-primary" : "btn-secondary"}`}
         >
           All ({total})
@@ -65,7 +58,8 @@ export default async function QuotationsPage({
         {QUOTATION_STATUSES.map((value) => (
           <Link
             key={value}
-            href={`/quotations?status=${value}`}
+            href={listHref("/quotations", { q: query, status: value })}
+            aria-current={filter === value ? "page" : undefined}
             className={`btn ${filter === value ? "btn-primary" : "btn-secondary"}`}
           >
             {QUOTATION_STATUS_LABELS[value]} ({counts.get(value) ?? 0})
@@ -78,17 +72,23 @@ export default async function QuotationsPage({
           title={
             filter ? `${QUOTATION_STATUS_LABELS[filter]} quotations` : "All quotations"
           }
-          description={`${quotations.length} shown`}
+          description={`${pagination.total} ${query ? "matching " : ""}quotation${pagination.total === 1 ? "" : "s"}`}
         />
         {quotations.length === 0 ? (
           <EmptyState
-            title="Nothing here"
+            title={query ? "No quotations match your search" : "Nothing here"}
             description={
-              filter
+              query
+                ? "Try another quotation number, title or customer."
+                : filter
                 ? "No quotations have this status yet."
                 : "Create your first quotation, or generate one from an inquiry."
             }
-            action={<LinkButton href="/quotations/new" variant="primary">New quotation</LinkButton>}
+            action={query ? (
+              <LinkButton href={listHref("/quotations", { status: filter })}>Clear search</LinkButton>
+            ) : (
+              <LinkButton href="/quotations/new" variant="primary">New quotation</LinkButton>
+            )}
           />
         ) : (
           <ul className="divide-y divide-[var(--color-line)]">
@@ -101,7 +101,7 @@ export default async function QuotationsPage({
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{q.title}</p>
                     <p className="truncate text-xs text-[var(--color-ink-muted)]">
-                      {q.number} · {q.customer.name} · {formatDate(q.createdAt, profile.locale)}
+                      {q.number} · {q.customer.name} · {fmt.date(q.createdAt)}
                       {q.aiGenerated ? " · AI draft" : ""}
                     </p>
                   </div>
@@ -118,6 +118,12 @@ export default async function QuotationsPage({
             ))}
           </ul>
         )}
+        <Pagination
+          pathname="/quotations"
+          query={query}
+          filters={{ status: filter }}
+          pagination={pagination}
+        />
       </Card>
     </>
   );

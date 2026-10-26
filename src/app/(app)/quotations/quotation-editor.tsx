@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useId, useMemo, useRef, useState } from "react";
 import { SubmitButton } from "@/components/submit-button";
 import { Alert, Field } from "@/components/ui";
 import { idleState, type ActionState } from "@/lib/action-state";
-import { CURRENCIES, minorUnitDigits } from "@/lib/currency";
+import { CURRENCIES } from "@/lib/currency";
+import { catalogLineFields, clearForeignCatalogPrice } from "@/lib/catalog-line";
 import { computeTotals, formatMoney, parseAmountToCents } from "@/lib/money";
 
 export interface EditorProduct {
@@ -31,6 +32,7 @@ export interface EditorLine {
   unit: string;
   unitPrice: string;
   taxRate: string;
+  catalogPriceCurrency?: string;
 }
 
 export interface EditorValues {
@@ -49,15 +51,9 @@ export interface EditorValues {
   lines?: Omit<EditorLine, "key">[];
 }
 
-let keySeed = 0;
-function nextKey(): string {
-  keySeed += 1;
-  return `line-${keySeed}`;
-}
-
-function blankLine(defaultTaxRate: string): EditorLine {
+function blankLine(defaultTaxRate: string, key: string): EditorLine {
   return {
-    key: nextKey(),
+    key,
     productId: "",
     description: "",
     quantity: "1",
@@ -112,11 +108,14 @@ export function QuotationEditor({
 }) {
   const [state, formAction] = useActionState(action, idleState);
   const defaultTaxRate = String(defaultTaxRateBp / 100);
+  const formId = useId();
+  const sequence = useRef(Math.max(1, values.lines?.length ?? 0));
+  const newLine = () => blankLine(defaultTaxRate, `${formId}-line-${sequence.current++}`);
 
   const [lines, setLines] = useState<EditorLine[]>(() =>
     (values.lines ?? []).length > 0
-      ? values.lines!.map((line) => ({ ...line, key: nextKey() }))
-      : [blankLine(defaultTaxRate)],
+      ? values.lines!.map((line, index) => ({ ...line, key: `${formId}-line-${index}` }))
+      : [blankLine(defaultTaxRate, `${formId}-line-0`)],
   );
   const [currency, setCurrency] = useState(values.currency ?? defaultCurrency);
   const [discount, setDiscount] = useState(values.discount ?? "0.00");
@@ -151,18 +150,10 @@ export function QuotationEditor({
   const applyProduct = (key: string, productId: string) => {
     const product = products.find((p) => p.id === productId);
     if (!product) {
-      updateLine(key, { productId: "" });
+      updateLine(key, { productId: "", catalogPriceCurrency: undefined });
       return;
     }
-    const digits = minorUnitDigits(currency);
-    updateLine(key, {
-      productId,
-      description: product.description?.trim() || product.name,
-      unit: product.unit,
-      // Catalog prices are stored in the workspace currency's minor units.
-      unitPrice: (product.unitPriceCents / 10 ** digits).toFixed(digits),
-      taxRate: String(product.taxRateBp / 100),
-    });
+    updateLine(key, catalogLineFields(product, baseCurrency, currency));
   };
 
   if (customers.length === 0) {
@@ -229,7 +220,11 @@ export function QuotationEditor({
             className="input"
             required
             value={currency}
-            onChange={(event) => setCurrency(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setCurrency(next);
+              setLines((current) => current.map((line) => clearForeignCatalogPrice(line, next)));
+            }}
           >
             {CURRENCIES.map((entry) => (
               <option key={entry.code} value={entry.code}>
@@ -258,7 +253,7 @@ export function QuotationEditor({
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => setLines((current) => [...current, blankLine(defaultTaxRate)])}
+            onClick={() => setLines((current) => [...current, newLine()])}
           >
             Add line
           </button>
@@ -267,6 +262,13 @@ export function QuotationEditor({
         {errors.items ? (
           <p className="mb-2 text-xs text-[var(--color-danger)]" role="alert">
             {errors.items}
+          </p>
+        ) : null}
+
+        {currency !== baseCurrency ? (
+          <p className="mb-3 text-sm text-[var(--color-ink-muted)]">
+            Catalog prices are in {baseCurrency}. Enter prices in {currency} yourself;
+            no currency conversion is applied.
           </p>
         ) : null}
 
@@ -359,7 +361,7 @@ export function QuotationEditor({
                           inputMode="decimal"
                           required
                           value={line.unitPrice}
-                          onChange={(event) => updateLine(line.key, { unitPrice: event.target.value })}
+                          onChange={(event) => updateLine(line.key, { unitPrice: event.target.value, catalogPriceCurrency: undefined })}
                         />
                         {rowErrors.unitPrice ? (
                           <p className="mt-1 text-xs text-[var(--color-danger)]">{rowErrors.unitPrice}</p>
@@ -391,7 +393,7 @@ export function QuotationEditor({
                       onClick={() =>
                         setLines((current) =>
                           current.length === 1
-                            ? [blankLine(defaultTaxRate)]
+                            ? [newLine()]
                             : current.filter((l) => l.key !== line.key),
                         )
                       }

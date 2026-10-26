@@ -12,6 +12,7 @@ async function quotation(
   data: Partial<{
     status: string;
     currency: string;
+    baseCurrency: string | null;
     totalCents: number;
     exchangeRateToBase: number | null;
     createdAt: Date;
@@ -29,6 +30,7 @@ async function quotation(
     data: {
       status: data.status ?? "sent",
       currency: data.currency ?? "USD",
+      baseCurrency: data.baseCurrency === undefined ? "USD" : data.baseCurrency,
       totalCents: data.totalCents ?? 10_000,
       exchangeRateToBase:
         data.exchangeRateToBase === undefined ? 1 : data.exchangeRateToBase,
@@ -156,6 +158,84 @@ describe("getAnalytics", () => {
     expect(analytics.acceptedInBase.totalCents).toBe(21_000);
     expect(analytics.acceptedInBase.converted).toBe(2);
     expect(analytics.acceptedInBase.unconverted).toBe(1);
+  });
+
+  it("does not reuse old exchange rates after the reporting currency changes", async () => {
+    const workspace = await createWorkspace();
+    await quotation(workspace, {
+      status: "accepted",
+      currency: "EUR",
+      baseCurrency: "USD",
+      exchangeRateToBase: 1.1,
+      totalCents: 10_000,
+    });
+    await quotation(workspace, {
+      status: "accepted",
+      currency: "USD",
+      baseCurrency: "USD",
+      exchangeRateToBase: 1,
+      totalCents: 20_000,
+    });
+    // Same-currency amounts do not require any FX rate, even when their old
+    // recorded rate targets a different reporting currency.
+    await quotation(workspace, {
+      status: "accepted",
+      currency: "GBP",
+      baseCurrency: "USD",
+      exchangeRateToBase: 1.25,
+      totalCents: 30_000,
+    });
+    await prisma.businessProfile.update({
+      where: { organizationId: workspace.organizationId },
+      data: { currency: "GBP" },
+    });
+
+    const analytics = await getAnalytics(workspace.organizationId, { until: NOW });
+    expect(analytics.baseCurrency).toBe("GBP");
+    expect(analytics.acceptedInBase).toEqual({
+      totalCents: 30_000,
+      converted: 1,
+      unconverted: 2,
+    });
+    expect(analytics.valueByCurrency.accepted).toHaveLength(3);
+  });
+
+  it("excludes a foreign-currency rate when its target currency was not recorded", async () => {
+    const workspace = await createWorkspace();
+    await quotation(workspace, {
+      status: "accepted",
+      currency: "EUR",
+      baseCurrency: null,
+      exchangeRateToBase: 1.1,
+    });
+
+    const analytics = await getAnalytics(workspace.organizationId, { until: NOW });
+    expect(analytics.acceptedInBase).toEqual({
+      totalCents: 0,
+      converted: 0,
+      unconverted: 1,
+    });
+  });
+
+  it("uses a recorded rate only when it targets an explicitly requested base currency", async () => {
+    const workspace = await createWorkspace();
+    await quotation(workspace, {
+      status: "accepted",
+      currency: "EUR",
+      baseCurrency: "GBP",
+      exchangeRateToBase: 0.85,
+      totalCents: 10_000,
+    });
+
+    const analytics = await getAnalytics(workspace.organizationId, {
+      until: NOW,
+      baseCurrency: "GBP",
+    });
+    expect(analytics.acceptedInBase).toEqual({
+      totalCents: 8_500,
+      converted: 1,
+      unconverted: 0,
+    });
   });
 
   it("reports median times from real timestamps only", async () => {

@@ -3,10 +3,12 @@ import { redirect } from "next/navigation";
 import { DesktopNav, MobileNav, type NavItem } from "@/components/app-nav";
 import { SubmitButton } from "@/components/submit-button";
 import { VerifyBanner } from "@/components/verify-banner";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { prisma } from "@/lib/db";
 import { isEmailConfigured } from "@/lib/env";
 import { PLAN_LABELS } from "@/lib/plans";
 import { getSession } from "@/lib/session";
+import { listWorkspaces } from "@/lib/workspaces";
 import { signOutAction } from "@/server/auth-actions";
 
 /**
@@ -25,7 +27,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const session = await getSession();
   if (!session) redirect("/sign-in");
 
-  const [newInquiries, dueReminders, account] = await Promise.all([
+  const [newInquiries, dueReminders, account, workspaces] = await Promise.all([
     prisma.inquiry.count({ where: { organizationId: session.organizationId, status: "new" } }),
     prisma.reminder.count({
       where: {
@@ -38,6 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       where: { id: session.userId },
       select: { emailVerifiedAt: true },
     }),
+    listWorkspaces(session.userId),
   ]);
 
   // Only ask for confirmation where confirmation is actually possible: with no
@@ -69,9 +72,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <Link href="/dashboard" className="text-sm font-semibold tracking-tight">
             QuoteFlow<span className="text-[var(--color-brand)]"> AI</span>
           </Link>
-          <p className="mt-2 truncate text-xs text-[var(--color-ink-subtle)]">
-            {session.organization.name}
-          </p>
+          <WorkspaceSwitcher
+            workspaces={workspaces}
+            currentOrganizationId={session.organizationId}
+          />
         </div>
         <div className="flex-1 px-3">
           <DesktopNav items={items} />
@@ -102,6 +106,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <MobileNav items={items} />
           </div>
         </header>
+
+        {workspaces.length > 1 ? (
+          <div className="border-b border-[var(--color-line)] bg-[var(--color-surface)] px-4 pb-3 lg:hidden">
+            <WorkspaceSwitcher
+              workspaces={workspaces}
+              currentOrganizationId={session.organizationId}
+            />
+          </div>
+        ) : null}
 
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div className="mx-auto max-w-5xl space-y-6">

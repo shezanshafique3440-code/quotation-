@@ -8,8 +8,9 @@ import { listMembers, listPendingInvitations } from "@/lib/members";
 import { PLAN_LABELS } from "@/lib/plans";
 import { can, canActOn, isRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "@/lib/roles";
 import { requireTenant } from "@/lib/tenant";
-import { removeMemberAction, resendInvitationAction, revokeInvitationAction } from "@/server/member-actions";
+import { removeMemberAction } from "@/server/member-actions";
 import { InvitePanel } from "./invite-panel";
+import { InvitationActions } from "./invitation-actions";
 import { RoleSelect } from "./role-select";
 
 export const metadata: Metadata = { title: "Teammates" };
@@ -157,25 +158,11 @@ export default async function TeamPage({
                         {fmt.date(invitation.expiresAt)}
                       </p>
                     </div>
-                    <div className="flex flex-col items-end gap-2">
-                      {isEmailConfigured() ? (
-                        <ConfirmForm
-                          action={resendInvitationAction}
-                          fields={{ invitationId: invitation.id }}
-                          label="Re-send"
-                          pendingLabel="Sending…"
-                          confirm="Re-sending replaces the link, so the one already sent stops working. Continue?"
-                        />
-                      ) : null}
-                      <ConfirmForm
-                        action={revokeInvitationAction}
-                        fields={{ invitationId: invitation.id }}
-                        label="Revoke"
-                        pendingLabel="Revoking…"
-                        variant="danger"
-                        confirm={`Revoke the invitation for ${invitation.email}? The link stops working immediately.`}
-                      />
-                    </div>
+                    <InvitationActions
+                      invitationId={invitation.id}
+                      email={invitation.email}
+                      emailConfigured={isEmailConfigured()}
+                    />
                   </li>
                 );
               })}

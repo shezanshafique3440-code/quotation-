@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import {
   acceptInvitation,
+  acceptInvitationAsNewUser,
   createInvitation,
   pruneInvitations,
+  replaceInvitation,
   resolveInvitation,
   revokeInvitation,
   seatUsage,
@@ -88,6 +90,18 @@ describe("seatUsage", () => {
 });
 
 describe("createInvitation", () => {
+  it("does not reserve a seat if its audit write fails", async () => {
+    const workspace = await proWorkspace();
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER reject_invite_audit BEFORE INSERT ON "ActivityEvent"
+      WHEN NEW."kind" = 'security.member_invited' BEGIN SELECT RAISE(ABORT, 'audit write blocked'); END`);
+    try {
+      await expect(invite(workspace, "alex@example.test")).rejects.toThrow();
+      expect(await prisma.invitation.count()).toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER reject_invite_audit");
+    }
+    await expect(invite(workspace, "alex@example.test")).resolves.toBeTruthy();
+  });
   it("stores only a hash of the token", async () => {
     const workspace = await createWorkspace();
     const invitation = await invite(workspace, "alex@example.test");
@@ -146,6 +160,40 @@ describe("createInvitation", () => {
   });
 });
 
+describe("replaceInvitation", () => {
+  it("keeps the old link live when a plan downgrade prevents replacement", async () => {
+    const workspace = await proWorkspace();
+    const invitation = await invite(workspace, "alex@example.test");
+    await prisma.organization.update({ where: { id: workspace.organizationId }, data: { plan: "free" } });
+
+    await expect(replaceInvitation({
+      organizationId: workspace.organizationId,
+      invitationId: invitation.id,
+      actor: actorOf(workspace),
+    })).rejects.toThrow(/seat/i);
+    expect(await resolveInvitation(invitation.token)).not.toBeNull();
+    expect(await prisma.invitation.count()).toBe(1);
+  });
+
+  it("rolls back both invitations when replacement audit storage fails", async () => {
+    const workspace = await proWorkspace();
+    const invitation = await invite(workspace, "alex@example.test");
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER reject_replacement_audit BEFORE INSERT ON "ActivityEvent"
+      WHEN NEW."kind" = 'security.invitation_revoked' BEGIN SELECT RAISE(ABORT, 'audit write blocked'); END`);
+    try {
+      await expect(replaceInvitation({
+        organizationId: workspace.organizationId,
+        invitationId: invitation.id,
+        actor: actorOf(workspace),
+      })).rejects.toThrow();
+      expect(await resolveInvitation(invitation.token)).not.toBeNull();
+      expect(await prisma.invitation.count()).toBe(1);
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER reject_replacement_audit");
+    }
+  });
+});
+
 describe("resolveInvitation", () => {
   it("reports whether the address already has an account", async () => {
     const workspace = await createWorkspace();
@@ -187,6 +235,36 @@ describe("acceptInvitation", () => {
       where: { userId_organizationId: { userId: user.id, organizationId: workspace.organizationId } },
     });
     expect(membership.role).toBe("admin");
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).emailVerifiedAt).not.toBeNull();
+  });
+
+  it("preserves an existing email confirmation timestamp", async () => {
+    const workspace = await proWorkspace();
+    const invitation = await invite(workspace, "alex@example.test");
+    const user = await createUser("alex@example.test");
+    const verifiedAt = new Date("2026-01-01T00:00:00Z");
+    await prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: verifiedAt } });
+
+    await acceptInvitation(invitation.token, user.id);
+
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).emailVerifiedAt).toEqual(verifiedAt);
+  });
+
+  it("keeps the invitation usable when membership creation fails", async () => {
+    const workspace = await proWorkspace();
+    const invitation = await invite(workspace, "alex@example.test");
+    const user = await createUser("alex@example.test");
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER reject_invited_member BEFORE INSERT ON "Membership"
+      WHEN NEW."role" = 'member' BEGIN SELECT RAISE(ABORT, 'membership insert blocked'); END`);
+    try {
+      await expect(acceptInvitation(invitation.token, user.id)).rejects.toThrow();
+      expect(await resolveInvitation(invitation.token)).not.toBeNull();
+      expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).emailVerifiedAt).toBeNull();
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER reject_invited_member");
+    }
+
+    await expect(acceptInvitation(invitation.token, user.id)).resolves.toMatchObject({ userId: user.id });
   });
 
   it("refuses an account whose address is not the invited one", async () => {
@@ -267,6 +345,30 @@ describe("acceptInvitation", () => {
         where: { userId: user.id, organizationId: theirs.organizationId },
       }),
     ).toBe(0);
+  });
+});
+
+describe("acceptInvitationAsNewUser", () => {
+  it("rolls back a new account when no seat remains, allowing the same link to be retried", async () => {
+    const workspace = await proWorkspace();
+    const invitation = await invite(workspace, "new-person@example.test");
+    const input = {
+      token: invitation.token,
+      name: "New Person",
+      passwordHash: await hashPassword("correct-horse-battery"),
+    };
+    await prisma.organization.update({ where: { id: workspace.organizationId }, data: { plan: "free" } });
+
+    await expect(acceptInvitationAsNewUser(input)).rejects.toThrow(/no seat available/i);
+    expect(await prisma.user.findUnique({ where: { email: "new-person@example.test" } })).toBeNull();
+    expect(await resolveInvitation(invitation.token)).not.toBeNull();
+
+    await prisma.organization.update({ where: { id: workspace.organizationId }, data: { plan: "pro" } });
+    const joined = await acceptInvitationAsNewUser(input);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: joined.userId } });
+    expect(user.emailVerifiedAt).not.toBeNull();
+    expect(await prisma.membership.count({ where: { userId: joined.userId } })).toBe(1);
+    expect(await resolveInvitation(invitation.token)).toBeNull();
   });
 });
 

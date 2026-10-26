@@ -45,11 +45,13 @@ export function BusinessProfileForm({
   values,
   timeZones,
   emailEnabled,
+  brandingEnabled,
 }: {
   values: ProfileValues;
   timeZones: string[];
   /** False when the deployment has no email provider at all. */
   emailEnabled: boolean;
+  brandingEnabled: boolean;
 }) {
   const [state, action] = useActionState(updateBusinessProfileAction, idleState);
   const errors = state.fieldErrors ?? {};
@@ -59,6 +61,12 @@ export function BusinessProfileForm({
       {state.status === "error" && state.message ? <Alert tone="danger">{state.message}</Alert> : null}
       {state.status === "success" && state.message ? (
         <Alert tone="positive">{state.message}</Alert>
+      ) : null}
+      {!brandingEnabled ? (
+        <Alert tone="brand" title="Custom branding is included with Pro">
+          Upgrade to change your logo, brand colour or portal copy. Your existing branding is kept
+          when you save other settings.
+        </Alert>
       ) : null}
 
       <div className="space-y-4">
@@ -110,9 +118,9 @@ export function BusinessProfileForm({
             label="Logo URL"
             htmlFor="logoUrl"
             error={errors.logoUrl}
-            hint="Stored for future use; the PDF currently prints your business name as the letterhead."
+            hint="Shown on shared quotation pages and the customer portal. The PDF uses your business name."
           >
-            <input id="logoUrl" name="logoUrl" className="input" defaultValue={values.logoUrl} />
+            <input id="logoUrl" name="logoUrl" className="input" defaultValue={values.logoUrl} disabled={!brandingEnabled} />
           </Field>
         </div>
       </div>
@@ -178,6 +186,7 @@ export function BusinessProfileForm({
                 className="input font-mono"
                 maxLength={7}
                 defaultValue={values.brandColor}
+                disabled={!brandingEnabled}
                 aria-describedby="brandColorSwatch"
               />
               <span
@@ -263,6 +272,7 @@ export function BusinessProfileForm({
               className="input"
               maxLength={120}
               defaultValue={values.portalHeadline}
+              disabled={!brandingEnabled}
               placeholder="Your quotations"
             />
           </Field>
@@ -273,6 +283,7 @@ export function BusinessProfileForm({
               className="input min-h-20"
               maxLength={2000}
               defaultValue={values.portalMessage}
+              disabled={!brandingEnabled}
             />
           </Field>
         </div>
@@ -359,7 +370,7 @@ export function BusinessProfileForm({
             label="Currency"
             htmlFor="currency"
             error={errors.currency}
-            hint="Used for new quotations and for reporting."
+            hint="Used for catalog prices, new quotations and reporting. Remove catalog products before changing currency, then recreate them with new prices."
           >
             <select id="currency" name="currency" className="input" defaultValue={values.currency}>
               {CURRENCIES.map((currency) => (

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Card, CardHeader, PageHeader } from "@/components/ui";
 import { bpToInput } from "@/lib/format";
 import { isEmailConfigured } from "@/lib/env";
+import { limitsFor } from "@/lib/plans";
 import { listTimeZones } from "@/lib/timezone";
 import { requireTenant } from "@/lib/tenant";
 import { BusinessProfileForm } from "./form";
@@ -9,7 +10,7 @@ import { BusinessProfileForm } from "./form";
 export const metadata: Metadata = { title: "Business profile" };
 
 export default async function BusinessProfilePage() {
-  const { profile } = await requireTenant();
+  const { profile, session } = await requireTenant();
   const timeZones = listTimeZones();
 
   return (
@@ -24,6 +25,7 @@ export default async function BusinessProfilePage() {
         <BusinessProfileForm
           timeZones={timeZones}
           emailEnabled={isEmailConfigured()}
+          brandingEnabled={limitsFor(session.organization.plan).customBranding}
           values={{
             legalName: profile.legalName,
             currency: profile.currency,

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
+import { ListSearch, Pagination } from "@/components/list-controls";
+import { Badge, Card, CardHeader, EmptyState, LinkButton, PageHeader } from "@/components/ui";
 import {
   INQUIRY_CHANNEL_LABELS,
   INQUIRY_STATUS_LABELS,
@@ -8,7 +9,8 @@ import {
   type InquiryStatus,
 } from "@/lib/constants";
 import { prisma } from "@/lib/db";
-import { formatDate } from "@/lib/format";
+import { parseListQuery, type ListSearchParams } from "@/lib/pagination";
+import { listInquiries } from "@/lib/records";
 import { requireTenant } from "@/lib/tenant";
 import { createInquiryAction } from "@/server/inquiry-actions";
 import { InquiryForm } from "./inquiry-form";
@@ -22,24 +24,21 @@ const STATUS_TONE: Record<InquiryStatus, "neutral" | "brand" | "positive"> = {
   archived: "neutral",
 };
 
-export default async function InquiriesPage() {
-  const { session, profile } = await requireTenant();
+export default async function InquiriesPage({
+  searchParams,
+}: {
+  searchParams: Promise<ListSearchParams>;
+}) {
+  const { query, page } = parseListQuery(await searchParams);
+  const { session, fmt } = await requireTenant();
 
-  const [customers, inquiries] = await Promise.all([
+  const [customers, { rows: inquiries, pagination }] = await Promise.all([
     prisma.customer.findMany({
       where: { organizationId: session.organizationId },
       orderBy: { name: "asc" },
       select: { id: true, name: true, company: true },
     }),
-    prisma.inquiry.findMany({
-      where: { organizationId: session.organizationId },
-      orderBy: { receivedAt: "desc" },
-      take: 100,
-      include: {
-        customer: { select: { name: true } },
-        _count: { select: { quotations: true } },
-      },
-    }),
+    listInquiries(session.organizationId, { query, page }),
   ]);
 
   return (
@@ -54,12 +53,22 @@ export default async function InquiriesPage() {
         <InquiryForm action={createInquiryAction} customers={customers} />
       </Card>
 
+      <ListSearch
+        pathname="/inquiries"
+        query={query}
+        label="Search inquiries"
+        placeholder="Subject, message or customer"
+      />
+
       <Card>
-        <CardHeader title={`${inquiries.length} inquir${inquiries.length === 1 ? "y" : "ies"}`} />
+        <CardHeader title={`${pagination.total} ${query ? "matching " : ""}inquir${pagination.total === 1 ? "y" : "ies"}`} />
         {inquiries.length === 0 ? (
           <EmptyState
-            title="Nothing logged yet"
-            description="Log the first request and turn it into a quotation in a couple of clicks."
+            title={query ? "No inquiries match your search" : "Nothing logged yet"}
+            description={query
+              ? "Try another subject, message or customer."
+              : "Log the first request and turn it into a quotation in a couple of clicks."}
+            action={query ? <LinkButton href="/inquiries">Clear search</LinkButton> : undefined}
           />
         ) : (
           <ul className="divide-y divide-[var(--color-line)]">
@@ -74,7 +83,7 @@ export default async function InquiriesPage() {
                     <p className="truncate text-xs text-[var(--color-ink-muted)]">
                       {inquiry.customer.name} ·{" "}
                       {INQUIRY_CHANNEL_LABELS[inquiry.channel as InquiryChannel] ?? inquiry.channel} ·{" "}
-                      {formatDate(inquiry.receivedAt, profile.locale)}
+                      {fmt.date(inquiry.receivedAt)}
                       {inquiry._count.quotations > 0
                         ? ` · ${inquiry._count.quotations} quotation${inquiry._count.quotations === 1 ? "" : "s"}`
                         : ""}
@@ -88,6 +97,7 @@ export default async function InquiriesPage() {
             ))}
           </ul>
         )}
+        <Pagination pathname="/inquiries" query={query} pagination={pagination} />
       </Card>
     </>
   );

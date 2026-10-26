@@ -12,15 +12,16 @@ import { prisma } from "@/lib/db";
 import { AppError, NotFoundError } from "@/lib/errors";
 import { checkbox, moneyCents, percentBp, text } from "@/lib/form";
 import { requireSession } from "@/lib/session";
+import { requireTenant } from "@/lib/tenant";
 import { assertWithinLimit } from "@/lib/usage";
 import { fieldErrors, productSchema } from "@/lib/validation";
 
-function readForm(formData: FormData) {
+function readForm(formData: FormData, currency: string) {
   return productSchema.safeParse({
     name: text(formData, "name"),
     sku: text(formData, "sku"),
     description: text(formData, "description"),
-    unitPriceCents: moneyCents(formData, "unitPrice"),
+    unitPriceCents: moneyCents(formData, "unitPrice", currency),
     unit: text(formData, "unit"),
     taxRateBp: percentBp(formData, "taxRate") ?? 0,
     active: checkbox(formData, "active"),
@@ -36,8 +37,8 @@ export async function createProductAction(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    const session = await requireSession();
-    const parsed = readForm(formData);
+    const { session, profile } = await requireTenant();
+    const parsed = readForm(formData, profile.currency);
     if (!parsed.success) {
       return errorState("Please fix the highlighted fields.", fieldErrors(parsed.error));
     }
@@ -72,11 +73,11 @@ export async function updateProductAction(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    const session = await requireSession();
+    const { session, profile } = await requireTenant();
     const id = text(formData, "id");
     if (!id) throw new NotFoundError("Product not found.");
 
-    const parsed = readForm(formData);
+    const parsed = readForm(formData, profile.currency);
     if (!parsed.success) {
       return errorState("Please fix the highlighted fields.", fieldErrors(parsed.error));
     }

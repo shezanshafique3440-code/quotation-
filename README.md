@@ -15,6 +15,8 @@ Built with Next.js 15 (App Router), TypeScript, Prisma and Tailwind CSS v4.
 | --- | --- |
 | **Authentication** | Email + password, scrypt hashing, database-backed sessions. The cookie holds a random token; only an HMAC of it is stored. |
 | **Multi-tenancy** | Every record belongs to an `Organization`. Each request re-checks membership, and every query is scoped by `organizationId`. |
+| **Workspace switching** | People in multiple organizations can switch workspaces on desktop or mobile; each switch re-checks membership and loads the destination role. |
+| **Search & pagination** | Search customers, inquiries and quotations, retain quotation status filters, and reach older records through stable pages. Follow-ups have separate overdue, upcoming and closed pages. |
 | **Business profile** | Name, address, tax ID, currency, locale, default tax rate, quote-number prefix, validity, default notes and terms. |
 | **Product catalog** | Priced items with unit, SKU and tax rate. Feeds the quotation builder and the AI drafter. |
 | **Inquiries** | Log a request against a customer, with channel and status (`new → quoted → won / archived`). |
@@ -84,8 +86,23 @@ Built with Next.js 15 (App Router), TypeScript, Prisma and Tailwind CSS v4.
 
 ## Getting started
 
+Use Node.js 24 LTS and npm. The checked-in lockfile pins dependencies.
+
+For Windows testing with a local email inbox, maintenance runner, and Free/Pro
+demo accounts, follow [the local Windows guide](docs/LOCAL_WINDOWS.md):
+
 ```bash
-npm install
+npm run setup:local -- --mail
+npm run dev:local
+# In a second terminal:
+npm run test:local
+```
+
+The local Pro account is an explicit development fixture. Captured email stays
+on your computer; AI and real billing still need provider credentials.
+
+```bash
+npm ci
 cp .env.example .env          # then set SESSION_SECRET
 npm run db:generate
 npm run db:push
@@ -339,7 +356,7 @@ Those panels derive their state from the action result instead.
 npm test
 ```
 
-430+ tests across 33 files. Unit tests cover the money engine, the currency
+544 tests across 46 files. Unit tests cover the money engine, the currency
 registry and its minor units, timezone arithmetic across DST, plan metering,
 validation schemas, password hashing, branding contrast, WhatsApp rendering,
 form parsing, request/bot classification and the AI-draft mapping.

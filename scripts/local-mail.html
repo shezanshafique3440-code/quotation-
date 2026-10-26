@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuoteFlow local inbox</title>
+  <style>
+    :root { color-scheme:light dark; font:16px/1.5 system-ui,sans-serif; }
+    body { max-width:1000px; margin:32px auto; padding:0 20px; }
+    header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; }
+    h1 { margin:0; font-size:24px; } h2 { font-size:18px; } p { margin:8px 0; }
+    button,a { font:inherit; } button { padding:8px 16px; cursor:pointer; }
+    article { border:1px solid #8888; border-radius:12px; padding:20px; margin:20px 0; }
+    pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+    #status { color:#888; } .links { display:flex; flex-wrap:wrap; gap:16px; }
+  </style>
+  <script src="/inbox.js" defer></script>
+</head>
+<body>
+  <header><h1>QuoteFlow local inbox</h1><button id="refresh" type="button">Refresh messages</button></header>
+  <p>Captured test emails appear here. Messages are held in memory and disappear when the inbox closes.</p>
+  <p id="status" role="status">Loading messages…</p>
+  <main id="messages" aria-label="Captured messages"></main>
+</body>
+</html>

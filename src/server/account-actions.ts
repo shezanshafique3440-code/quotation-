@@ -29,7 +29,7 @@ import { applyPasswordReset } from "./accounts";
  * only what it can promise.
  */
 const NEUTRAL_RESET_REPLY =
-  "If that address has an account, a reset link is on its way. It is valid for one hour.";
+  "If that address has an account, we will try to send a reset link. Any link is valid for one hour.";
 
 export async function requestPasswordResetAction(
   _prev: ActionState,
@@ -90,15 +90,8 @@ export async function requestPasswordResetAction(
       metadata: outcome.ok ? null : { error: outcome.error ?? outcome.reason },
     });
 
-    // A send failure is the one case worth breaking neutrality for: the
-    // address is already known to exist, and silently promising an email that
-    // was rejected would leave the person waiting for nothing.
-    if (!outcome.ok) {
-      return errorState(
-        `The reset email could not be sent: ${outcome.error ?? outcome.reason ?? "unknown error"}`,
-      );
-    }
-
+    // Delivery failures are recorded above, but exposing them here would
+    // reveal whether this address has an account during a provider outage.
     return successState(NEUTRAL_RESET_REPLY);
   } catch (error) {
     if (isFrameworkError(error)) throw error;

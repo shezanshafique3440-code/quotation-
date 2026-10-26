@@ -46,7 +46,7 @@ export function ConfirmForm({
           {label}
         </SubmitButton>
       </form>
-      {showResult && state.status !== "idle" && state.message ? (
+      {(state.status === "error" || (showResult && state.status === "success")) && state.message ? (
         <div className="mt-2">
           <Alert tone={state.status === "error" ? "danger" : "positive"}>{state.message}</Alert>
         </div>

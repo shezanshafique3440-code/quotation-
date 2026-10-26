@@ -1,4 +1,5 @@
-import { ACTIVITY_KINDS, recordActivity } from "./activity";
+import type { Prisma } from "@prisma/client";
+import { ACTIVITY_KINDS, recordActivity, recordActivityTx } from "./activity";
 import { fingerprint, randomToken } from "./crypto";
 import { prisma } from "./db";
 import { getEnv } from "./env";
@@ -40,9 +41,18 @@ export async function seatUsage(
   plan: string,
   now: Date = new Date(),
 ): Promise<SeatUsage> {
+  return seatUsageWithClient(prisma, organizationId, plan, now);
+}
+
+async function seatUsageWithClient(
+  client: Prisma.TransactionClient,
+  organizationId: string,
+  plan: string,
+  now: Date,
+): Promise<SeatUsage> {
   const [members, pending] = await Promise.all([
-    prisma.membership.count({ where: { organizationId } }),
-    prisma.invitation.count({
+    client.membership.count({ where: { organizationId } }),
+    client.invitation.count({
       where: { organizationId, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
     }),
   ]);
@@ -53,6 +63,7 @@ export async function seatUsage(
 }
 
 export interface IssuedInvitation {
+  id: string;
   token: string;
   url: string;
   expiresAt: Date;
@@ -77,10 +88,17 @@ interface InviteInput {
  * seat left — so the caller never emails a link that cannot be accepted.
  */
 export async function createInvitation(input: InviteInput): Promise<IssuedInvitation> {
+  return prisma.$transaction((tx) => createInvitationInTransaction(tx, input));
+}
+
+async function createInvitationInTransaction(
+  tx: Prisma.TransactionClient,
+  input: InviteInput,
+): Promise<IssuedInvitation> {
   const now = input.now ?? new Date();
   const email = input.email.trim().toLowerCase();
 
-  const existingMember = await prisma.membership.findFirst({
+  const existingMember = await tx.membership.findFirst({
     where: { organizationId: input.organizationId, user: { email } },
     select: { id: true },
   });
@@ -91,7 +109,7 @@ export async function createInvitation(input: InviteInput): Promise<IssuedInvita
     });
   }
 
-  const livePending = await prisma.invitation.findFirst({
+  const livePending = await tx.invitation.findFirst({
     where: {
       organizationId: input.organizationId,
       email,
@@ -108,7 +126,7 @@ export async function createInvitation(input: InviteInput): Promise<IssuedInvita
     );
   }
 
-  const seats = await seatUsage(input.organizationId, input.plan, now);
+  const seats = await seatUsageWithClient(tx, input.organizationId, input.plan, now);
   if (!seats.hasRoom) {
     throw new AppError(
       `Your plan includes ${seats.limit} ${seats.limit === 1 ? "seat" : "seats"}, and ${seats.used} ${
@@ -121,9 +139,10 @@ export async function createInvitation(input: InviteInput): Promise<IssuedInvita
   const token = randomToken(32);
   const expiresAt = new Date(now.getTime() + INVITATION_TTL_DAYS * 86_400_000);
 
-  await prisma.invitation.create({
+  const id = invitationId(token);
+  await tx.invitation.create({
     data: {
-      id: invitationId(token),
+      id,
       organizationId: input.organizationId,
       email,
       role: input.role,
@@ -132,7 +151,7 @@ export async function createInvitation(input: InviteInput): Promise<IssuedInvita
     },
   });
 
-  await recordActivity({
+  await recordActivityTx(tx, {
     organizationId: input.organizationId,
     category: "security",
     kind: ACTIVITY_KINDS.memberInvited,
@@ -143,7 +162,58 @@ export async function createInvitation(input: InviteInput): Promise<IssuedInvita
     metadata: { email, role: input.role, expiresAt: expiresAt.toISOString() },
   });
 
-  return { token, url: invitationUrl(token), expiresAt, email, role: input.role };
+  return { id, token, url: invitationUrl(token), expiresAt, email, role: input.role };
+}
+
+/** Keep the old link live unless its replacement is completely stored. */
+export async function replaceInvitation(input: {
+  organizationId: string;
+  invitationId: string;
+  actor: { userId: string; label: string };
+  now?: Date;
+}): Promise<IssuedInvitation> {
+  const now = input.now ?? new Date();
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.invitation.findFirst({
+      where: {
+        id: input.invitationId,
+        organizationId: input.organizationId,
+        acceptedAt: null,
+        revokedAt: null,
+      },
+    });
+    if (!existing) throw new NotFoundError("That invitation is no longer pending.");
+
+    const claimed = await tx.invitation.updateMany({
+      where: { id: existing.id, acceptedAt: null, revokedAt: null },
+      data: { revokedAt: now },
+    });
+    if (claimed.count === 0) throw new NotFoundError("That invitation is no longer pending.");
+
+    const organization = await tx.organization.findUniqueOrThrow({
+      where: { id: input.organizationId },
+      select: { plan: true },
+    });
+    const replacement = await createInvitationInTransaction(tx, {
+      organizationId: input.organizationId,
+      plan: organization.plan,
+      email: existing.email,
+      role: existing.role === "admin" ? "admin" : "member",
+      actor: input.actor,
+      now,
+    });
+    await recordActivityTx(tx, {
+      organizationId: input.organizationId,
+      category: "security",
+      kind: ACTIVITY_KINDS.invitationRevoked,
+      summary: `${input.actor.label} replaced the invitation for ${existing.email}`,
+      actorType: "user",
+      actorId: input.actor.userId,
+      actorLabel: input.actor.label,
+      metadata: { email: existing.email },
+    });
+    return replacement;
+  });
 }
 
 export interface ResolvedInvitation {
@@ -163,9 +233,17 @@ export async function resolveInvitation(
   token: string,
   now: Date = new Date(),
 ): Promise<ResolvedInvitation | null> {
+  return resolveInvitationWithClient(prisma, token, now);
+}
+
+async function resolveInvitationWithClient(
+  client: Prisma.TransactionClient,
+  token: string,
+  now: Date,
+): Promise<ResolvedInvitation | null> {
   if (!token || token.length < 16 || token.length > 128) return null;
 
-  const record = await prisma.invitation.findUnique({
+  const record = await client.invitation.findUnique({
     where: { id: invitationId(token) },
     include: {
       organization: { select: { id: true, name: true } },
@@ -177,7 +255,7 @@ export async function resolveInvitation(
   if (record.acceptedAt || record.revokedAt) return null;
   if (record.expiresAt.getTime() <= now.getTime()) return null;
 
-  const existing = await prisma.user.findUnique({
+  const existing = await client.user.findUnique({
     where: { email: record.email },
     select: { id: true },
   });
@@ -213,12 +291,52 @@ export async function acceptInvitation(
   userId: string,
   now: Date = new Date(),
 ): Promise<AcceptedInvitation> {
-  const invitation = await resolveInvitation(token, now);
+  return prisma.$transaction((tx) => acceptInvitationInTransaction(tx, token, userId, now));
+}
+
+/** Account creation and joining either both succeed or both roll back. */
+export async function acceptInvitationAsNewUser(input: {
+  token: string;
+  name: string;
+  passwordHash: string;
+  now?: Date;
+}): Promise<AcceptedInvitation> {
+  const now = input.now ?? new Date();
+  return prisma.$transaction(async (tx) => {
+    const invitation = await resolveInvitationWithClient(tx, input.token, now);
+    if (!invitation) {
+      throw new NotFoundError("That invitation is no longer valid. Ask for a new one.");
+    }
+    if (invitation.existingUserId) {
+      throw new AppError("That address already has an account. Sign in to accept the invitation.", {
+        status: 409,
+      });
+    }
+
+    const user = await tx.user.create({
+      data: {
+        email: invitation.email,
+        name: input.name,
+        passwordHash: input.passwordHash,
+      },
+      select: { id: true },
+    });
+    return acceptInvitationInTransaction(tx, input.token, user.id, now);
+  });
+}
+
+async function acceptInvitationInTransaction(
+  tx: Prisma.TransactionClient,
+  token: string,
+  userId: string,
+  now: Date,
+): Promise<AcceptedInvitation> {
+  const invitation = await resolveInvitationWithClient(tx, token, now);
   if (!invitation) {
     throw new NotFoundError("That invitation is no longer valid. Ask for a new one.");
   }
 
-  const user = await prisma.user.findUnique({
+  const user = await tx.user.findUnique({
     where: { id: userId },
     select: { id: true, email: true, name: true },
   });
@@ -231,36 +349,29 @@ export async function acceptInvitation(
     );
   }
 
-  const already = await prisma.membership.findUnique({
+  const already = await tx.membership.findUnique({
     where: {
       userId_organizationId: { userId, organizationId: invitation.organizationId },
     },
     select: { id: true, role: true },
   });
-  if (already) {
-    await prisma.invitation.updateMany({
-      where: { id: invitation.id, acceptedAt: null },
-      data: { acceptedAt: now },
-    });
-    return { organizationId: invitation.organizationId, userId, role: already.role };
-  }
-
-  const organization = await prisma.organization.findUnique({
+  const organization = await tx.organization.findUnique({
     where: { id: invitation.organizationId },
     select: { plan: true },
   });
-  const seats = await seatUsage(invitation.organizationId, organization?.plan ?? "free", now);
+  const members = await tx.membership.count({ where: { organizationId: invitation.organizationId } });
+  const limit = limitsFor(organization?.plan ?? "free").teamMembers;
   // The pending invitation being accepted is itself one of the counted seats,
   // so compare against the members already in place plus this one.
-  if (!isWithinLimit(seats.members, seats.limit)) {
+  if (!already && !isWithinLimit(members, limit)) {
     throw new AppError(
       "This workspace has no seat available. Ask the owner to upgrade, then use the link again.",
       { status: 402, code: "seat_limit" },
     );
   }
 
-  const claimed = await prisma.invitation.updateMany({
-    where: { id: invitation.id, acceptedAt: null, revokedAt: null },
+  const claimed = await tx.invitation.updateMany({
+    where: { id: invitation.id, acceptedAt: null, revokedAt: null, expiresAt: { gt: now } },
     data: { acceptedAt: now },
   });
   // Two clicks on the same link race here; only the one that flipped the row
@@ -269,11 +380,21 @@ export async function acceptInvitation(
     throw new NotFoundError("That invitation has already been used.");
   }
 
-  await prisma.membership.create({
+  // Possession of the invitation proves this account's address, including for
+  // existing users. Preserve the timestamp of an earlier confirmation.
+  await tx.user.updateMany({
+    where: { id: userId, emailVerifiedAt: null },
+    data: { emailVerifiedAt: now },
+  });
+  if (already) {
+    return { organizationId: invitation.organizationId, userId, role: already.role };
+  }
+
+  await tx.membership.create({
     data: { userId, organizationId: invitation.organizationId, role: invitation.role },
   });
 
-  await recordActivity({
+  await recordActivityTx(tx, {
     organizationId: invitation.organizationId,
     category: "security",
     kind: ACTIVITY_KINDS.memberJoined,

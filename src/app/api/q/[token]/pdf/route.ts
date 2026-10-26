@@ -44,6 +44,7 @@ export async function GET(
       country: profile?.country ?? null,
       taxId: profile?.taxId ?? null,
       locale: profile?.locale ?? "en-US",
+      timezone: profile?.timezone ?? "UTC",
       brandColor: profile?.brandColor ?? null,
     });
 

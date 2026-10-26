@@ -1,0 +1,25 @@
+QuoteFlow - Windows par local testing
+
+1. Node.js 24 LTS install karein aur ZIP ko naye folder mein extract karein.
+2. Jis folder mein package.json hai, us mein PowerShell/Windows Terminal kholein.
+3. Ye command chalayein:
+
+   npm.cmd run setup:local -- --mail
+
+4. Phir app, email inbox aur scheduler start karein:
+
+   npm.cmd run dev:local
+
+5. Browser mein App: http://localhost:3000 aur Inbox: http://127.0.0.1:8025 kholein.
+6. Doosre terminal mein isi folder se automatic flow test chalayein:
+
+   npm.cmd run test:local
+
+Free demo: owner@northline.test / northline-demo-2026
+Pro demo: pro-owner@quoteflow.test / quoteflow-local-pro-2026
+
+Pro account sirf local test fixture hai; real Stripe payment nahi hui.
+Verification aur reset ki emails local inbox mein aati hain.
+Poora manual checklist aur troubleshooting: docs/LOCAL_WINDOWS.md
+
+Local testing complete hone ke baad hi GitHub push hoga.

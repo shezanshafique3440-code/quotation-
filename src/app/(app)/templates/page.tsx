@@ -57,6 +57,7 @@ export default async function TemplatesPage() {
           action={createTemplateAction}
           products={products}
           defaultTaxRateBp={profile.taxRateBp}
+          defaultCurrency={profile.currency}
           defaultValidityDays={profile.defaultValidityDays}
           submitLabel="Save template"
           resetOnSuccess
@@ -108,6 +109,7 @@ export default async function TemplatesPage() {
                         action={updateTemplateAction}
                         products={products}
                         defaultTaxRateBp={profile.taxRateBp}
+                        defaultCurrency={profile.currency}
                         defaultValidityDays={profile.defaultValidityDays}
                         submitLabel="Save changes"
                         values={{

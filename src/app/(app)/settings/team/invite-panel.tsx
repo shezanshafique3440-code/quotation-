@@ -37,6 +37,9 @@ export function InvitePanel({
             Shown once. Only a hash of it is stored, so it cannot be displayed again — re-send the
             invitation if it is lost.
           </p>
+          <a href="/settings/team" className="mt-2 inline-block text-xs underline">
+            Refresh the team list after copying the link
+          </a>
         </div>
       ) : null}
 

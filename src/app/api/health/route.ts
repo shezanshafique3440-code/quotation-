@@ -24,6 +24,7 @@ export async function GET() {
       integrations: {
         ai: environment.ai,
         billing: environment.billing,
+        email: environment.email,
         cron: environment.cron,
         publicPages: environment.publicPages,
       },

@@ -3,10 +3,8 @@ import Link from "next/link";
 import { ConfirmForm } from "@/components/confirm-form";
 import { Badge, Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
 import { REMINDER_CHANNEL_LABELS, type ReminderChannel } from "@/lib/constants";
-import { prisma } from "@/lib/db";
-import { formatDateTime, formatRelative } from "@/lib/format";
-import { formatMoney } from "@/lib/money";
 import { requireTenant } from "@/lib/tenant";
+import { getReminderGroups, type ReminderGroup } from "@/lib/reminder-list";
 import {
   cancelReminderAction,
   completeReminderAction,
@@ -15,38 +13,33 @@ import {
 
 export const metadata: Metadata = { title: "Follow-ups" };
 
-export default async function RemindersPage() {
-  const { session, profile } = await requireTenant();
+export default async function RemindersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ overduePage?: string; upcomingPage?: string; closedPage?: string }>;
+}) {
+  const query = await searchParams;
+  const { session, fmt } = await requireTenant();
   const now = new Date();
-
-  const reminders = await prisma.reminder.findMany({
-    where: { organizationId: session.organizationId },
-    orderBy: [{ status: "asc" }, { dueAt: "asc" }],
-    take: 200,
-    include: {
-      quotation: {
-        select: {
-          id: true,
-          number: true,
-          title: true,
-          status: true,
-          totalCents: true,
-          currency: true,
-          customer: { select: { name: true } },
-        },
-      },
-    },
+  const groups = await getReminderGroups(session.organizationId, {
+    now,
+    pages: { overdue: query.overduePage, upcoming: query.upcomingPage, closed: query.closedPage },
   });
-
-  const overdue = reminders.filter((r) => r.status === "pending" && r.dueAt <= now);
-  const upcoming = reminders.filter((r) => r.status === "pending" && r.dueAt > now);
-  const closed = reminders.filter((r) => r.status !== "pending");
-
   const sections = [
-    { key: "overdue", title: "Overdue", items: overdue, tone: "danger" as const },
-    { key: "upcoming", title: "Upcoming", items: upcoming, tone: "brand" as const },
-    { key: "closed", title: "Closed", items: closed, tone: "neutral" as const },
+    { key: "overdue" as const, title: "Overdue", ...groups.overdue },
+    { key: "upcoming" as const, title: "Upcoming", ...groups.upcoming },
+    { key: "closed" as const, title: "Closed", ...groups.closed },
   ];
+  const total = sections.reduce((count, section) => count + section.total, 0);
+  const pageHref = (key: ReminderGroup, page: number) => {
+    const params = new URLSearchParams();
+    for (const section of sections) {
+      const value = section.key === key ? page : section.page;
+      if (value > 1) params.set(`${section.key}Page`, String(value));
+    }
+    const suffix = params.toString();
+    return suffix ? `/reminders?${suffix}` : "/reminders";
+  };
 
   return (
     <>
@@ -55,7 +48,7 @@ export default async function RemindersPage() {
         description="Quotations go quiet. These are the ones you said you would chase."
       />
 
-      {reminders.length === 0 ? (
+      {total === 0 ? (
         <Card>
           <EmptyState
             title="No follow-ups scheduled"
@@ -65,10 +58,10 @@ export default async function RemindersPage() {
       ) : null}
 
       {sections
-        .filter((section) => section.items.length > 0)
+        .filter((section) => section.total > 0)
         .map((section) => (
           <Card key={section.key}>
-            <CardHeader title={`${section.title} (${section.items.length})`} />
+            <CardHeader title={`${section.title} (${section.total})`} />
             <ul className="divide-y divide-[var(--color-line)]">
               {section.items.map((reminder) => (
                 <li key={reminder.id} className="px-5 py-4">
@@ -85,16 +78,12 @@ export default async function RemindersPage() {
                           `Follow up by ${REMINDER_CHANNEL_LABELS[reminder.channel as ReminderChannel] ?? reminder.channel}`}
                       </p>
                       <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
-                        {formatDateTime(reminder.dueAt, profile.locale)}
+                        {fmt.dateTime(reminder.dueAt)}
                         {reminder.status === "pending"
-                          ? ` · ${formatRelative(reminder.dueAt, profile.locale, now)}`
+                          ? ` · ${fmt.relative(reminder.dueAt, now)}`
                           : null}{" "}
                         ·{" "}
-                        {formatMoney(
-                          reminder.quotation.totalCents,
-                          reminder.quotation.currency,
-                          profile.locale,
-                        )}{" "}
+                        {fmt.money(reminder.quotation.totalCents, reminder.quotation.currency)}{" "}
                         · {reminder.quotation.status}
                       </p>
                     </div>
@@ -134,6 +123,28 @@ export default async function RemindersPage() {
                 </li>
               ))}
             </ul>
+            {section.totalPages > 1 ? (
+              <nav
+                aria-label={`${section.title} follow-up pages`}
+                className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-line)] px-5 py-3 text-sm"
+              >
+                <p className="text-[var(--color-ink-muted)]">
+                  Page {section.page} of {section.totalPages}
+                </p>
+                <div className="flex gap-2">
+                  {section.page > 1 ? (
+                    <Link className="btn btn-secondary" href={pageHref(section.key, section.page - 1)}>
+                      Previous
+                    </Link>
+                  ) : null}
+                  {section.page < section.totalPages ? (
+                    <Link className="btn btn-secondary" href={pageHref(section.key, section.page + 1)}>
+                      Next
+                    </Link>
+                  ) : null}
+                </div>
+              </nav>
+            ) : null}
           </Card>
         ))}
     </>

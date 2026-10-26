@@ -1,5 +1,5 @@
-import { PDFDocument } from "pdf-lib";
-import { beforeEach, describe, expect, it } from "vitest";
+import { PDFDocument, PDFPage } from "pdf-lib";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderQuotationPdf, type PdfBusiness } from "@/lib/pdf";
 import { createQuotation, getQuotation } from "@/lib/quotations";
 import { createWorkspace, quotationInput, resetDatabase, type Workspace } from "./helpers";
@@ -37,6 +37,27 @@ async function quotationFor(workspace: Workspace, items?: unknown[]) {
 beforeEach(resetDatabase);
 
 describe("renderQuotationPdf", () => {
+  it("prints issue, expiry and response dates in the business timezone", async () => {
+    const workspace = await createWorkspace();
+    const quotation = await quotationFor(workspace);
+    const drawText = vi.spyOn(PDFPage.prototype, "drawText");
+    try {
+      await renderQuotationPdf({
+        ...quotation,
+        createdAt: new Date("2026-04-03T01:00:00Z"),
+        validUntil: new Date("2026-04-04T06:59:59Z"),
+        respondedAt: new Date("2026-04-03T02:00:00Z"),
+        status: "accepted",
+      }, { ...business, locale: "en-US", timezone: "America/Los_Angeles" });
+      const lines = drawText.mock.calls.map(([text]) => text);
+      expect(lines).toContain("Issued Apr 2, 2026");
+      expect(lines).toContain("Valid until Apr 3, 2026");
+      expect(lines).toContain("On: Apr 2, 2026");
+    } finally {
+      drawText.mockRestore();
+    }
+  });
+
   it("produces a real, non-trivial PDF document", async () => {
     const workspace = await createWorkspace();
     const pdf = await renderQuotationPdf(await quotationFor(workspace), business);
@@ -67,6 +88,26 @@ describe("renderQuotationPdf", () => {
 
     const pdf = await renderQuotationPdf(await quotationFor(workspace, items), business);
     expect((await parse(pdf)).pageCount).toBeGreaterThan(1);
+  });
+
+  it("keeps long notes and terms on the page instead of drawing below its footer", async () => {
+    const workspace = await createWorkspace();
+    const quotation = await quotationFor(workspace);
+    const drawText = vi.spyOn(PDFPage.prototype, "drawText");
+    try {
+      const pdf = await renderQuotationPdf({
+        ...quotation,
+        notes: "Delivery and installation are included in this quotation. ".repeat(65),
+        terms: "Payment is due on completion of the agreed work. ".repeat(80),
+      }, business);
+      expect((await parse(pdf)).pageCount).toBeGreaterThan(1);
+      for (const [, options] of drawText.mock.calls) {
+        // The footer itself is deliberately below the 48-point content margin.
+        expect(options?.y).toBeGreaterThanOrEqual(32);
+      }
+    } finally {
+      drawText.mockRestore();
+    }
   });
 
   it("does not throw on characters outside the standard font's encoding", async () => {

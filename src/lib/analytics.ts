@@ -112,6 +112,7 @@ export async function getAnalytics(
         id: true,
         status: true,
         currency: true,
+        baseCurrency: true,
         totalCents: true,
         exchangeRateToBase: true,
         createdAt: true,
@@ -164,7 +165,12 @@ export async function getAnalytics(
   let converted = 0;
   let unconverted = 0;
   for (const row of acceptedRows) {
-    const value = convertToBase(row.totalCents, row.currency, baseCurrency, row.exchangeRateToBase);
+    // A recorded rate targets the base currency saved with the quotation,
+    // which may differ from today's reporting currency after a profile edit.
+    const rate = row.baseCurrency?.toUpperCase() === baseCurrency.toUpperCase()
+      ? row.exchangeRateToBase
+      : null;
+    const value = convertToBase(row.totalCents, row.currency, baseCurrency, rate);
     if (value === null) unconverted += 1;
     else {
       convertedTotal += value;

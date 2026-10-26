@@ -140,6 +140,26 @@ describe("createQuotation", () => {
       }),
     ).rejects.toThrow(NotFoundError);
   });
+
+  it("refuses an inquiry for another customer in the same workspace", async () => {
+    const workspace = await createWorkspace();
+    const customer = await prisma.customer.create({
+      data: { organizationId: workspace.organizationId, name: "Another customer" },
+    });
+
+    await expect(
+      createQuotation({
+        organizationId: workspace.organizationId,
+        userId: workspace.userId,
+        input: quotationInput(workspace, {
+          customerId: customer.id,
+          inquiryId: workspace.inquiryId,
+        }),
+        numberPrefix: "QT",
+      }),
+    ).rejects.toThrow(NotFoundError);
+    expect(await prisma.quotation.count()).toBe(0);
+  });
 });
 
 describe("updateQuotation", () => {
@@ -203,6 +223,77 @@ describe("updateQuotation", () => {
     await expect(
       updateQuotation(mine.organizationId, created.id, quotationInput(mine)),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  it("rechecks inquiry ownership before editing and leaves the original quote intact", async () => {
+    const mine = await createWorkspace();
+    const theirs = await createWorkspace();
+    const created = await createQuotation({
+      organizationId: mine.organizationId,
+      userId: mine.userId,
+      input: quotationInput(mine, { inquiryId: mine.inquiryId }),
+      numberPrefix: "QT",
+    });
+
+    await expect(
+      updateQuotation(
+        mine.organizationId,
+        created.id,
+        quotationInput(mine, { inquiryId: theirs.inquiryId, title: "Forged edit" }),
+      ),
+    ).rejects.toThrow(NotFoundError);
+
+    const unchanged = await getQuotation(mine.organizationId, created.id);
+    expect(unchanged.title).toBe(created.title);
+    expect(unchanged.inquiryId).toBe(mine.inquiryId);
+    expect(unchanged.items.map((item) => item.id)).toEqual(created.items.map((item) => item.id));
+  });
+
+  it("refuses to relink an inquiry to a different customer on edit", async () => {
+    const workspace = await createWorkspace();
+    const customer = await prisma.customer.create({
+      data: { organizationId: workspace.organizationId, name: "Another customer" },
+    });
+    const created = await createQuotation({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      input: quotationInput(workspace, { inquiryId: workspace.inquiryId }),
+      numberPrefix: "QT",
+    });
+
+    await expect(
+      updateQuotation(
+        workspace.organizationId,
+        created.id,
+        quotationInput(workspace, {
+          customerId: customer.id,
+          inquiryId: workspace.inquiryId,
+        }),
+      ),
+    ).rejects.toThrow(NotFoundError);
+
+    expect(await getQuotation(workspace.organizationId, created.id)).toMatchObject({
+      customerId: workspace.customerId,
+      inquiryId: workspace.inquiryId,
+    });
+  });
+
+  it("accepts an inquiry belonging to the selected customer on edit", async () => {
+    const workspace = await createWorkspace();
+    const created = await createQuotation({
+      organizationId: workspace.organizationId,
+      userId: workspace.userId,
+      input: quotationInput(workspace),
+      numberPrefix: "QT",
+    });
+
+    const updated = await updateQuotation(
+      workspace.organizationId,
+      created.id,
+      quotationInput(workspace, { inquiryId: workspace.inquiryId }),
+    );
+    expect(updated.inquiryId).toBe(workspace.inquiryId);
+    expect(updated.inquiry?.id).toBe(workspace.inquiryId);
   });
 });
 

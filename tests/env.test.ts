@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { parseEnv } from "node:util";
 import {
   assertProductionSafe,
   describeEnvironment,
@@ -35,6 +37,25 @@ const GOOD_PROD = {
 };
 
 describe("development defaults", () => {
+  it("accepts the documented .env.example with unused credentials left blank", () => {
+    setEnv({
+      ...parseEnv(readFileSync(".env.example", "utf8")),
+      NODE_ENV: "development",
+      NEXT_PHASE: undefined,
+    });
+    const env = getEnv();
+    expect(env.SESSION_SECRET).toBeUndefined();
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.SMTP_PASSWORD).toBeUndefined();
+    expect(env.CRON_SECRET).toBeUndefined();
+    expect(describeEnvironment()).toMatchObject({ ai: false, email: false, billing: false });
+  });
+
+  it("still requires credentials for an enabled integration when entries are blank", () => {
+    setEnv({ NODE_ENV: "development", AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: " " });
+    expect(() => getEnv()).toThrow(/AI_PROVIDER=anthropic requires ANTHROPIC_API_KEY/);
+  });
+
   it("runs with only a database URL", () => {
     setEnv({ NODE_ENV: "development", SESSION_SECRET: undefined, APP_URL: undefined, NEXT_PHASE: undefined });
     const env = getEnv();
@@ -60,6 +81,11 @@ describe("production safety", () => {
 
   it("refuses to boot without a session secret", () => {
     setEnv({ ...GOOD_PROD, SESSION_SECRET: undefined });
+    expect(() => getEnv()).toThrow(/SESSION_SECRET is required/);
+  });
+
+  it("treats an empty production session secret as missing", () => {
+    setEnv({ ...GOOD_PROD, SESSION_SECRET: "" });
     expect(() => getEnv()).toThrow(/SESSION_SECRET is required/);
   });
 

@@ -1,21 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ListSearch, Pagination } from "@/components/list-controls";
 import { Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
-import { prisma } from "@/lib/db";
+import { parseListQuery, type ListSearchParams } from "@/lib/pagination";
+import { listCustomers } from "@/lib/records";
 import { requireTenant } from "@/lib/tenant";
 import { createCustomerAction } from "@/server/customer-actions";
 import { CustomerForm } from "./customer-form";
 
 export const metadata: Metadata = { title: "Customers" };
 
-export default async function CustomersPage() {
+export default async function CustomersPage({
+  searchParams,
+}: {
+  searchParams: Promise<ListSearchParams>;
+}) {
   const { session } = await requireTenant();
-
-  const customers = await prisma.customer.findMany({
-    where: { organizationId: session.organizationId },
-    orderBy: { createdAt: "desc" },
-    include: { _count: { select: { quotations: true, inquiries: true } } },
-  });
+  const options = parseListQuery(await searchParams);
+  const { rows: customers, pagination, query } = await listCustomers(session.organizationId, options);
 
   return (
     <>
@@ -30,11 +32,19 @@ export default async function CustomersPage() {
       </Card>
 
       <Card>
-        <CardHeader title={`${customers.length} customer${customers.length === 1 ? "" : "s"}`} />
+        <CardHeader title={`${pagination.total} customer${pagination.total === 1 ? "" : "s"}`} />
+        <div className="border-b border-[var(--color-line)] px-5 py-4">
+          <ListSearch
+            pathname="/customers"
+            query={query}
+            label="Search customers"
+            placeholder="Name, company, email or phone"
+          />
+        </div>
         {customers.length === 0 ? (
           <EmptyState
-            title="No customers yet"
-            description="Add your first customer above, then log the inquiry they sent you."
+            title={query ? "No matching customers" : "No customers yet"}
+            description={query ? "Try another name, company or contact detail, or clear the search." : "Add your first customer above, then log the inquiry they sent you."}
           />
         ) : (
           <ul className="divide-y divide-[var(--color-line)]">
@@ -61,6 +71,7 @@ export default async function CustomersPage() {
             ))}
           </ul>
         )}
+        <Pagination pathname="/customers" pagination={pagination} query={query} />
       </Card>
     </>
   );

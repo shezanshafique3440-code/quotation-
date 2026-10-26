@@ -53,6 +53,22 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+async function assertInquiryOwned(
+  organizationId: string,
+  customerId: string,
+  inquiryId: string | undefined,
+): Promise<void> {
+  if (!inquiryId) return;
+
+  const inquiry = await prisma.inquiry.findFirst({
+    where: { id: inquiryId, organizationId, customerId },
+    select: { id: true },
+  });
+  if (!inquiry) {
+    throw new NotFoundError("That inquiry does not belong to the selected customer in your workspace.");
+  }
+}
+
 interface CreateArgs {
   organizationId: string;
   userId: string;
@@ -96,13 +112,7 @@ export async function createQuotation({
   });
   if (!customer) throw new NotFoundError("That customer does not exist in your workspace.");
 
-  if (input.inquiryId) {
-    const inquiry = await prisma.inquiry.findFirst({
-      where: { id: input.inquiryId, organizationId },
-      select: { id: true },
-    });
-    if (!inquiry) throw new NotFoundError("That inquiry does not exist in your workspace.");
-  }
+  await assertInquiryOwned(organizationId, input.customerId, input.inquiryId);
 
   const productIds = [...new Set(input.items.map((i) => i.productId).filter(Boolean))] as string[];
   if (productIds.length > 0) {
@@ -198,6 +208,8 @@ export async function updateQuotation(
     select: { id: true },
   });
   if (!customer) throw new NotFoundError("That customer does not exist in your workspace.");
+
+  await assertInquiryOwned(organizationId, input.customerId, input.inquiryId);
 
   const productIds = [...new Set(input.items.map((i) => i.productId).filter(Boolean))] as string[];
   if (productIds.length > 0) {

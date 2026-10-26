@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+/** Empty optional entries in .env.example mean "not configured". */
+function optionalString(minLength = 1) {
+  return z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().min(minLength).optional(),
+  );
+}
+
 /**
  * Environment configuration.
  *
@@ -14,19 +22,19 @@ const schema = z.object({
   APP_URL: z.string().url().default("http://localhost:3000"),
 
   /** Used to derive the session cookie MAC. Required outside development. */
-  SESSION_SECRET: z.string().min(32).optional(),
+  SESSION_SECRET: optionalString(32),
 
   /** "anthropic" enables AI drafting; "none" disables it explicitly. */
   AI_PROVIDER: z.enum(["anthropic", "none"]).default("none"),
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_API_KEY: optionalString(),
   AI_MODEL: z.string().min(1).default("claude-sonnet-5"),
   AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().max(16000).default(4000),
 
   /** "stripe" enables checkout; "none" disables paid upgrades. */
   BILLING_PROVIDER: z.enum(["stripe", "none"]).default("none"),
-  STRIPE_SECRET_KEY: z.string().min(1).optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
-  STRIPE_PRICE_ID_PRO: z.string().min(1).optional(),
+  STRIPE_SECRET_KEY: optionalString(),
+  STRIPE_WEBHOOK_SECRET: optionalString(),
+  STRIPE_PRICE_ID_PRO: optionalString(),
 
   /**
    * Outbound email. "none" disables sending entirely — the UI then says so
@@ -34,22 +42,22 @@ const schema = z.object({
    */
   EMAIL_PROVIDER: z.enum(["resend", "smtp", "none"]).default("none"),
   /** Envelope sender: "QuoteFlow <quotes@example.com>" or a bare address. */
-  EMAIL_FROM: z.string().min(3).optional(),
-  EMAIL_REPLY_TO: z.string().min(3).optional(),
+  EMAIL_FROM: optionalString(3),
+  EMAIL_REPLY_TO: optionalString(3),
 
-  RESEND_API_KEY: z.string().min(1).optional(),
+  RESEND_API_KEY: optionalString(),
 
-  SMTP_HOST: z.string().min(1).optional(),
+  SMTP_HOST: optionalString(),
   SMTP_PORT: z.coerce.number().int().positive().max(65535).default(587),
-  SMTP_USER: z.string().min(1).optional(),
-  SMTP_PASSWORD: z.string().min(1).optional(),
+  SMTP_USER: optionalString(),
+  SMTP_PASSWORD: optionalString(),
   SMTP_SECURE: z
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
 
   /** Shared secret for the reminder-dispatch cron endpoint. */
-  CRON_SECRET: z.string().min(16).optional(),
+  CRON_SECRET: optionalString(16),
 
   /**
    * Whether a trusted proxy rewrites `x-forwarded-for`. Leave false when the
