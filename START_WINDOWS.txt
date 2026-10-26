@@ -22,4 +22,4 @@ Pro account sirf local test fixture hai; real Stripe payment nahi hui.
 Verification aur reset ki emails local inbox mein aati hain.
 Poora manual checklist aur troubleshooting: docs/LOCAL_WINDOWS.md
 
-Local testing complete hone ke baad hi GitHub push hoga.
+Code codex/windows-local-test branch par available hai. Windows testing ka result share karein.

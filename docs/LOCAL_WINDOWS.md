@@ -1,7 +1,7 @@
 # Windows par local testing
 
-Is package mein latest, abhi tak GitHub par push na ki gayi changes hain.
-Windows par aapki testing ke baad hi push kiya jayega. ZIP mein credentials,
+Is package mein Windows testing ke liye latest changes hain. Code GitHub ki
+`codex/windows-local-test` branch se download kiya ja sakta hai. ZIP mein credentials,
 database, `node_modules` aur Git authentication shamil nahi hain.
 
 ## 1. Node aur folder tayyar karein
@@ -144,4 +144,5 @@ apne child processes mein forwarded-IP buckets enable karta hai. Persisted
 AI aur Stripe local setup mein off rehte hain. Captured SMTP emails external
 inboxes tak nahi jati. Live Anthropic/email/Stripe credentials, real payment
 testing, HTTPS deployment aur hosted schedule baad mein configure honge.
-Abhi koi GitHub push nahi kiya gaya.
+Code `codex/windows-local-test` branch par available hai; Windows par manual
+testing abhi aapke computer par karni hai.

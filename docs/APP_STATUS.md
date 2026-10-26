@@ -89,7 +89,8 @@ in the application. It does not automatically send messages or ingest chats.
 Windows instructions are in [LOCAL_WINDOWS.md](LOCAL_WINDOWS.md). Commands use
 Windows-safe child-process invocation and test database paths; runtime validation
 so far was on the cloud Linux machine. Testing on the user's Windows computer
-is the next step, before any GitHub push. The local Pro account is an explicit
+is the next step. Code is available on the `codex/windows-local-test` GitHub
+branch for that review. The local Pro account is an explicit
 development fixture and does not represent a Stripe payment.
 
 These results cover this prepared instance and checkout. They do not establish
